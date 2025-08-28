@@ -648,7 +648,7 @@ const CallLogPage = () => {
         </div>
         {showChat && (
           <div className="fixed bottom-18 right-4 w-[30vw] min-w-[360px] max-w-[640px] h-[90vh] bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] p-[2px] rounded-lg">
-            <div className="w-full h-full bg-black rounded-lg">
+            <div className="w-full h-full bg-[var(--color-bg-primary)] rounded-lg">
               <CallDetailChat
                 callRecord={callRecord}
                 transcriptData={transcriptData}

@@ -33,7 +33,7 @@ const MarkdownComponents = {
     <h3 className="text-sm font-medium mb-1 text-[var(--color-text-primary)]">{children}</h3>
   ),
   p: ({ children }: any) => (
-    <p className="mb-2 text-gray-900 leading-relaxed">{children}</p>
+    <p className="mb-2 text-[var(--color-text-primary)] leading-relaxed">{children}</p>
   ),
   ul: ({ children }: any) => (
     <ul className="list-disc list-inside mb-2 space-y-1 text-[var(--color-text-primary)]">
@@ -276,7 +276,7 @@ const CallDetailChat: React.FC<CallDetailChatProps> = ({
               PRISM - Call Analysis
             </span>
           </h3>
-          <p className="text-xs text-[var(--color-text-primary)] flex items-center gap-1">
+          <p className="text-sm text-[var(--color-text-primary)] flex items-center gap-1">
             <span className="w-2 h-2 bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] rounded-full"></span>
             {callRecord.agent_username || "Agent"} •{" "}
             {callRecord.queue_name || "Queue"}
@@ -313,7 +313,7 @@ const CallDetailChat: React.FC<CallDetailChatProps> = ({
               }`}
             >
               <div
-                className={`rounded-lg px-3 py-2 text-xs bg-[var(--color-bg-primary)]  ${
+                className={`rounded-lg px-3 py-2 text-sm bg-[var(--color-bg-primary)]  ${
                   message.type === "user"
                     ? "bg-[var(--color-prism-orange)] text-[var(--color-text-primary)]"
                     : message.error
@@ -322,19 +322,19 @@ const CallDetailChat: React.FC<CallDetailChatProps> = ({
                 }`}
               >
                 {message.type === "assistant" && !message.error ? (
-                  <div className="prose prose-sm max-w-none text-xs ">
+                  <div className="prose prose-sm max-w-none text-sm ">
                     <ReactMarkdown components={MarkdownComponents}>
                       {message.content}
                     </ReactMarkdown>
                   </div>
                 ) : (
-                  <div className="whitespace-pre-wrap text-xs leading-relaxed ">
+                  <div className="whitespace-pre-wrap text-sm leading-relaxed ">
                     {message.content}
                   </div>
                 )}
               </div>
               <div
-                className={`text-xs text-gray-500 mt-1  ${
+                className={`text-sm text-gray-500 mt-1  ${
                   message.type === "user" ? "text-right" : "text-left"
                 }`}
               >
@@ -348,7 +348,7 @@ const CallDetailChat: React.FC<CallDetailChatProps> = ({
           <div className="flex gap-3 justify-start">
             <div className="bg-gray-100 rounded-lg px-3 py-2">
               <div className="flex items-center gap-1">
-                <div className="text-xs text-[var(--color-text-primary)] mr-2">
+                <div className="text-xs text-black mr-2">
                   Thinking
                 </div>
                 <div className="w-2 h-2 bg-[var(--color-bg-primary)] rounded-full animate-bounce"></div>
