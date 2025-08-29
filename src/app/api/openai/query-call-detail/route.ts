@@ -68,7 +68,7 @@ ${callDataString}
 Provide a comprehensive analysis focusing on this individual call with specific insights and actionable recommendations.`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4.1',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }

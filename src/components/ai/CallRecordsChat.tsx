@@ -717,7 +717,7 @@ const CallRecordsChat: React.FC<CallRecordsChatProps> = ({
               }`}
             >
               <div
-                className={`rounded-lg px-3 py-2 text-xs bg-[var(--color-bg-primary)] ${
+                className={`rounded-lg px-3 py-2 text-sm bg-[var(--color-bg-primary)] ${
                   message.type === "user"
                     ? "bg-[var(--color-prism-orange)] text-[var(--color-text-primary)]"
                     : message.error
@@ -732,13 +732,13 @@ const CallRecordsChat: React.FC<CallRecordsChatProps> = ({
                     </ReactMarkdown>
                   </div>
                 ) : (
-                  <div className="whitespace-pre-wrap text-xs leading-relaxed text-inherit">
+                  <div className="whitespace-pre-wrap text-sm leading-relaxed text-inherit">
                     {message.content}
                   </div>
                 )}
 
                 {message.metadata && (
-                  <div className="text-xs mt-2 pt-2 border-t border-gray-200 flex items-center gap-4 opacity-70 ">
+                  <div className="text-sm mt-2 pt-2 border-t border-gray-200 flex items-center gap-4 opacity-70 ">
                     {message.metadata.processingTime && (
                       <span className="flex items-center gap-1">
                         <Clock className="w-3 h-3" />
@@ -774,7 +774,7 @@ const CallRecordsChat: React.FC<CallRecordsChatProps> = ({
           <div className="flex gap-3 justify-start">
             <div className="bg-white rounded-xl px-4 py-3 border ">
               <div className="flex items-center gap-2">
-                <div className="text-xs text-[var(--color-text-primary)]">
+                <div className="text-xs text-black">
                   {dataComplexity?.complexity === "extreme"
                     ? "Thinking..."
                     : hasFullDispositionData
