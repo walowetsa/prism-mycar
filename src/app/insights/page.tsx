@@ -8,19 +8,37 @@ import CallLogFilters, {
 import InsightsStatsDashboard from "../../components/dashboards/InsightsStatsDashboard";
 import CallRecordsChat from "../../components/ai/CallRecordsChat";
 
+interface LoadingState {
+  isLoading: boolean;
+  currentBatch: number;
+  totalBatches: number;
+  recordsLoaded: number;
+  totalRecords: number;
+}
+
+const BATCH_SIZE = 2000; // Smaller batch size to avoid timeouts
+const MAX_RECORDS_FOR_INSIGHTS = 20000; // Cap for insights analysis
+
 const InsightsPage = () => {
   const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
   const [allRecordsCount, setAllRecordsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showChat, setShowChat] = useState(false);
+  
+  // Enhanced loading state for incremental loading
+  const [loadingState, setLoadingState] = useState<LoadingState>({
+    isLoading: false,
+    currentBatch: 0,
+    totalBatches: 0,
+    recordsLoaded: 0,
+    totalRecords: 0,
+  });
 
   // Filter states
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>("all");
   const [selectedAgent, setSelectedAgent] = useState<string>("");
-  const [selectedDispositions, setSelectedDispositions] = useState<string[]>(
-    []
-  );
+  const [selectedDispositions, setSelectedDispositions] = useState<string[]>([]);
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
@@ -29,47 +47,119 @@ const InsightsPage = () => {
   const [uniqueDispositions, setUniqueDispositions] = useState<string[]>([]);
   const [filtersLoading, setFiltersLoading] = useState(true);
 
-  // Fetch filtered records for insights - we'll get more records for better insights
-  const fetchCallRecords = useCallback(async () => {
+  // Fetch records incrementally in batches
+  const fetchCallRecordsIncrementally = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-
-      // For insights, we want to fetch more records to get better statistics
-      // We'll use a higher limit but still benefit from server-side filtering
-      const params = new URLSearchParams({
+      setCallRecords([]); // Clear existing records
+      
+      // First, get the total count with a lightweight query
+      const countParams = new URLSearchParams({
         page: "1",
-        limit: "99999", // Get more records for insights analysis
+        limit: "1", // Just get count
         filterPeriod,
+        countOnly: "true",
         ...(selectedAgent && { agent: selectedAgent }),
         ...(selectedDispositions.length > 0 && {
           dispositions: selectedDispositions.join(","),
         }),
         ...(startDate && { startDate }),
         ...(endDate && { endDate }),
-        sortField: "initiation_timestamp",
-        sortDirection: "desc",
       });
 
-      const response = await fetch(`/api/supabase/call-logs?${params}`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      const countResponse = await fetch(`/api/supabase/call-logs?${countParams}`);
+      
+      if (!countResponse.ok) {
+        throw new Error(`HTTP error! status: ${countResponse.status}`);
       }
 
-      const result = await response.json();
-
-      if (result.error) {
-        throw new Error(result.error);
+      const countResult = await countResponse.json();
+      const totalRecords = countResult.pagination?.total || 0;
+      
+      setAllRecordsCount(totalRecords);
+      
+      if (totalRecords === 0) {
+        setLoading(false);
+        return;
       }
 
-      setCallRecords(result.data || []);
-      setAllRecordsCount(result.pagination.total || 0);
+      // Calculate how many records to actually fetch (cap at MAX_RECORDS_FOR_INSIGHTS)
+      const recordsToFetch = Math.min(totalRecords, MAX_RECORDS_FOR_INSIGHTS);
+      const totalBatches = Math.ceil(recordsToFetch / BATCH_SIZE);
+      
+      setLoadingState({
+        isLoading: true,
+        currentBatch: 0,
+        totalBatches,
+        recordsLoaded: 0,
+        totalRecords: recordsToFetch,
+      });
+
+      const allRecords: CallRecord[] = [];
+      
+      // Fetch records in batches
+      for (let batch = 1; batch <= totalBatches; batch++) {
+        setLoadingState(prev => ({
+          ...prev,
+          currentBatch: batch,
+        }));
+
+        const params = new URLSearchParams({
+          page: batch.toString(),
+          limit: BATCH_SIZE.toString(),
+          filterPeriod,
+          ...(selectedAgent && { agent: selectedAgent }),
+          ...(selectedDispositions.length > 0 && {
+            dispositions: selectedDispositions.join(","),
+          }),
+          ...(startDate && { startDate }),
+          ...(endDate && { endDate }),
+          sortField: "initiation_timestamp",
+          sortDirection: "desc",
+        });
+
+        const response = await fetch(`/api/supabase/call-logs?${params}`);
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+
+        if (result.error) {
+          throw new Error(result.error);
+        }
+
+        const batchRecords = result.data || [];
+        allRecords.push(...batchRecords);
+        
+        // Update records incrementally for better UX
+        setCallRecords([...allRecords]);
+        setLoadingState(prev => ({
+          ...prev,
+          recordsLoaded: allRecords.length,
+        }));
+
+        // Small delay to prevent overwhelming the database
+        if (batch < totalBatches) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        // Break if we've hit our cap or no more records
+        if (allRecords.length >= MAX_RECORDS_FOR_INSIGHTS || batchRecords.length < BATCH_SIZE) {
+          break;
+        }
+      }
+
+      setLoadingState(prev => ({ ...prev, isLoading: false }));
+      
     } catch (err) {
       console.error("Error fetching call records:", err);
       setError(
         err instanceof Error ? err.message : "Failed to fetch call records"
       );
+      setLoadingState(prev => ({ ...prev, isLoading: false }));
     } finally {
       setLoading(false);
     }
@@ -80,7 +170,6 @@ const InsightsPage = () => {
     try {
       setFiltersLoading(true);
 
-      // Fetch agents and dispositions in parallel
       const [agentsResponse, dispositionsResponse] = await Promise.all([
         fetch("/api/supabase/call-logs", {
           method: "POST",
@@ -118,7 +207,7 @@ const InsightsPage = () => {
   // Fetch records when filters change
   useEffect(() => {
     if (!filtersLoading) {
-      fetchCallRecords();
+      fetchCallRecordsIncrementally();
     }
   }, [
     filterPeriod,
@@ -126,7 +215,7 @@ const InsightsPage = () => {
     selectedDispositions,
     startDate,
     endDate,
-    fetchCallRecords,
+    fetchCallRecordsIncrementally,
     filtersLoading,
   ]);
 
@@ -144,7 +233,6 @@ const InsightsPage = () => {
 
   const handleFilterChange = (filter: FilterPeriod) => {
     setFilterPeriod(filter);
-
     if (filter !== "dateRange") {
       setStartDate("");
       setEndDate("");
@@ -169,7 +257,7 @@ const InsightsPage = () => {
 
   const handleRefresh = async () => {
     await fetchFilterOptions();
-    await fetchCallRecords();
+    await fetchCallRecordsIncrementally();
   };
 
   if (error) {
@@ -191,7 +279,7 @@ const InsightsPage = () => {
   }
 
   return (
-    <div className="flex-1 flex flex-col p-4 ">
+    <div className="flex-1 flex flex-col p-4">
       <div className="mb-4 flex flex-col gap-4">
         <div className="flex">
           <CallLogFilters
@@ -211,6 +299,36 @@ const InsightsPage = () => {
             disabled={loading || filtersLoading}
           />
         </div>
+        
+        {/* Loading Progress Indicator */}
+        {/* {loadingState.isLoading && (
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-blue-900">
+                Loading insights data...
+              </span>
+              <span className="text-sm text-blue-700">
+                {loadingState.recordsLoaded} / {loadingState.totalRecords} records
+              </span>
+            </div>
+            <div className="w-full bg-blue-200 rounded-full h-2">
+              <div
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
+                style={{
+                  width: `${(loadingState.recordsLoaded / loadingState.totalRecords) * 100}%`
+                }}
+              />
+            </div>
+            <div className="text-xs text-blue-600 mt-1">
+              Batch {loadingState.currentBatch} of {loadingState.totalBatches}
+              {loadingState.totalRecords < allRecordsCount && (
+                <span className="ml-2 text-blue-500">
+                  (Capped at {MAX_RECORDS_FOR_INSIGHTS.toLocaleString()} records for performance)
+                </span>
+              )}
+            </div>
+          </div>
+        )} */}
       </div>
 
       <div className="flex gap-x-4">
@@ -218,10 +336,11 @@ const InsightsPage = () => {
           <InsightsStatsDashboard
             filteredRecords={callRecords}
             totalRecords={allRecordsCount}
-            loading={loading}
+            loading={loading || loadingState.isLoading}
           />
         </div>
-        {/* Modal */}
+        
+        {/* Chat Modal */}
         <div className="fixed right-4 bottom-4">
           <button
             className="w-12 h-12 rounded-full bg-black flex items-center justify-center hover:scale-110 active:scale-90 cursor-pointer transition"
@@ -250,13 +369,14 @@ const InsightsPage = () => {
             </svg>
           </button>
         </div>
+        
         {showChat && (
           <div className="fixed bottom-18 right-4 w-[30vw] min-w-[360px] max-w-[640px] h-[90vh] bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] p-[2px] rounded-lg">
             <div className="w-full h-full bg-[var(--color-bg-primary)] rounded-lg">
               <CallRecordsChat
                 filteredRecords={callRecords}
                 totalRecords={allRecordsCount}
-                loading={loading}
+                loading={loading || loadingState.isLoading}
               />
             </div>
           </div>
