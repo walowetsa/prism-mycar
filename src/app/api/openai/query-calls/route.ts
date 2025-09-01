@@ -13,6 +13,7 @@ interface CallRecord {
   primary_category?: string;
   initiation_timestamp?: string;
   total_hold_time?: any;
+  transcript_text?: string;
   [key: string]: any;
 }
 
@@ -47,6 +48,16 @@ interface ProcessedMetrics {
   };
 }
 
+interface TranscriptSample {
+  id: string;
+  agent: string;
+  disposition: string;
+  sentiment: string;
+  excerpt: string;
+  relevanceScore: number;
+  duration: number;
+}
+
 // Initialize OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -63,15 +74,43 @@ const RATE_LIMIT_CONFIG = {
 // Helper functions
 const extractNumericValue = (value: any): number => {
   if (!value) return 0;
-  if (typeof value === 'number') return value;
-  if (typeof value === 'object' && value.minutes !== undefined && value.seconds !== undefined) {
-    return value.minutes * 60 + value.seconds;
+  
+  try {
+    let parsedDuration: { minutes?: number; seconds: number };
+    
+    if (typeof value === "string") {
+      // Try to parse as JSON first (matching dashboard logic)
+      parsedDuration = JSON.parse(value);
+    } else if (typeof value === "object") {
+      parsedDuration = value;
+    } else if (typeof value === "number") {
+      // If it's already a number, assume it's total seconds
+      return value;
+    } else {
+      return 0;
+    }
+
+    const { seconds, minutes = 0 } = parsedDuration;
+
+    // Validate that seconds is a valid number
+    if (typeof seconds !== "number" || seconds < 0) {
+      return 0;
+    }
+
+    // Validate that minutes is a valid number (if present)
+    if (minutes !== undefined && (typeof minutes !== "number" || minutes < 0)) {
+      return 0;
+    }
+
+    return minutes * 60 + seconds;
+  } catch {
+    // If JSON parsing fails, try parseFloat as fallback
+    if (typeof value === 'string') {
+      const parsed = parseFloat(value);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    return 0;
   }
-  if (typeof value === 'string') {
-    const parsed = parseFloat(value);
-    return isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
 };
 
 const extractSentiment = (sentimentAnalysis: any): string => {
@@ -87,6 +126,178 @@ const extractSentiment = (sentimentAnalysis: any): string => {
 };
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Smart transcript selection based on query type
+const selectRelevantTranscripts = (
+  records: CallRecord[],
+  queryType: string,
+  query: string,
+  maxTranscripts: number = 3
+): TranscriptSample[] => {
+  console.log(`🔍 Transcript Selection Debug:`);
+  console.log(`Total records received: ${records.length}`);
+  
+  // Debug: Check what transcript data we have
+  const recordsWithTranscripts = records.filter(record => record.transcript_text);
+  const recordsWithLongTranscripts = records.filter(record => 
+    record.transcript_text && 
+    record.transcript_text.trim().length > 50
+  );
+  
+  console.log(`Records with transcript_text: ${recordsWithTranscripts.length}`);
+  console.log(`Records with transcript_text >50 chars: ${recordsWithLongTranscripts.length}`);
+  
+  if (recordsWithTranscripts.length > 0) {
+    const sampleLengths = recordsWithTranscripts.slice(0, 5).map(r => 
+      r.transcript_text ? r.transcript_text.length : 0
+    );
+    console.log(`Sample transcript lengths: ${sampleLengths.join(', ')}`);
+  }
+
+  const availableTranscripts = records.filter(record => 
+    record.transcript_text && 
+    record.transcript_text.trim().length > 20  // Lowered threshold for debugging
+  );
+
+  console.log(`Available transcripts after filtering: ${availableTranscripts.length}`);
+
+  if (availableTranscripts.length === 0) {
+    console.log(`❌ No transcripts available for analysis`);
+    return [];
+  }
+
+  const queryLower = query.toLowerCase();
+  const queryKeywords = queryLower.split(' ').filter(word => word.length > 3);
+
+  // Score transcripts based on relevance to query
+  const scoredTranscripts = availableTranscripts.map(record => {
+    const transcript = record.transcript_text || '';
+    const transcriptLower = transcript.toLowerCase();
+    let relevanceScore = 0;
+
+    // Base scoring
+    queryKeywords.forEach(keyword => {
+      const matches = (transcriptLower.match(new RegExp(keyword, 'g')) || []).length;
+      relevanceScore += matches * 2;
+    });
+
+    // Query type specific scoring
+    switch (queryType) {
+      case 'sentiment':
+        const sentimentKeywords = ['happy', 'satisfied', 'angry', 'frustrated', 'pleased', 'upset', 'good', 'bad', 'excellent', 'terrible', 'love', 'hate'];
+        sentimentKeywords.forEach(word => {
+          if (transcriptLower.includes(word)) relevanceScore += 3;
+        });
+        break;
+
+      case 'disposition':
+        const dispositionKeywords = ['resolve', 'resolved', 'issue', 'problem', 'solution', 'help', 'transfer', 'escalate', 'cancel', 'refund'];
+        dispositionKeywords.forEach(word => {
+          if (transcriptLower.includes(word)) relevanceScore += 3;
+        });
+        break;
+
+      case 'agent_performance':
+        const performanceKeywords = ['thank', 'helpful', 'professional', 'rude', 'slow', 'quick', 'efficient', 'understand'];
+        performanceKeywords.forEach(word => {
+          if (transcriptLower.includes(word)) relevanceScore += 3;
+        });
+        break;
+
+      case 'queue_analysis':
+        const queueKeywords = ['wait', 'hold', 'transfer', 'department', 'long time', 'waiting'];
+        queueKeywords.forEach(word => {
+          if (transcriptLower.includes(word)) relevanceScore += 3;
+        });
+        break;
+    }
+
+    // Boost score for diversity (different agents, dispositions, sentiments)
+    const sentiment = extractSentiment(record.sentiment_analysis);
+    if (sentiment === 'Negative') relevanceScore += 1;
+    if (sentiment === 'Positive') relevanceScore += 1;
+    
+    return {
+      id: record.id,
+      agent: record.agent_username || 'Unknown',
+      disposition: record.disposition_title || 'Unknown',
+      sentiment,
+      excerpt: truncateTranscript(transcript, 400),
+      relevanceScore,
+      duration: extractNumericValue(record.call_duration),
+      fullRecord: record
+    };
+  });
+
+  // Sort by relevance score and select top transcripts
+  const sortedTranscripts = scoredTranscripts
+    .sort((a, b) => b.relevanceScore - a.relevanceScore)
+    .slice(0, maxTranscripts * 2); // Get more candidates
+
+  // Ensure diversity in selection
+  const selected: TranscriptSample[] = [];
+  const usedAgents = new Set<string>();
+  const usedDispositions = new Set<string>();
+  const usedSentiments = new Set<string>();
+
+  for (const transcript of sortedTranscripts) {
+    if (selected.length >= maxTranscripts) break;
+    
+    // Prioritize diversity while maintaining relevance
+    const diversityBonus = 
+      (!usedAgents.has(transcript.agent) ? 1 : 0) +
+      (!usedDispositions.has(transcript.disposition) ? 1 : 0) +
+      (!usedSentiments.has(transcript.sentiment) ? 1 : 0);
+    
+    if (diversityBonus > 0 || selected.length === 0 || transcript.relevanceScore > 5) {
+      selected.push(transcript);
+      usedAgents.add(transcript.agent);
+      usedDispositions.add(transcript.disposition);
+      usedSentiments.add(transcript.sentiment);
+    }
+  }
+
+  // If we don't have enough, add the highest scoring ones regardless of diversity
+  if (selected.length < Math.min(maxTranscripts, 2)) {
+    for (const transcript of sortedTranscripts) {
+      if (selected.length >= maxTranscripts) break;
+      if (!selected.find(s => s.id === transcript.id)) {
+        selected.push(transcript);
+      }
+    }
+  }
+
+  console.log(`✅ Selected ${selected.length} transcripts for query type: ${queryType}`);
+  selected.forEach((transcript, i) => {
+    console.log(`Transcript ${i + 1}: Agent=${transcript.agent}, Score=${transcript.relevanceScore}, Length=${transcript.excerpt.length}`);
+  });
+
+  return selected;
+};
+
+const truncateTranscript = (transcript: string, maxLength: number = 400): string => {
+  if (!transcript || transcript.length <= maxLength) return transcript;
+  
+  // Try to find a natural break point (sentence end)
+  const truncated = transcript.substring(0, maxLength);
+  const lastPeriod = truncated.lastIndexOf('.');
+  const lastExclamation = truncated.lastIndexOf('!');
+  const lastQuestion = truncated.lastIndexOf('?');
+  
+  const lastSentenceEnd = Math.max(lastPeriod, lastExclamation, lastQuestion);
+  
+  if (lastSentenceEnd > maxLength * 0.7) {
+    return truncated.substring(0, lastSentenceEnd + 1);
+  }
+  
+  // If no good break point, cut at word boundary
+  const lastSpace = truncated.lastIndexOf(' ');
+  if (lastSpace > maxLength * 0.8) {
+    return truncated.substring(0, lastSpace) + '...';
+  }
+  
+  return truncated + '...';
+};
 
 // Comprehensive data preprocessing
 const preprocessCallData = (records: CallRecord[]): ProcessedMetrics => {
@@ -241,13 +452,16 @@ const preprocessCallData = (records: CallRecord[]): ProcessedMetrics => {
   };
 };
 
-// Smart data chunking based on query type
+// Smart data chunking based on query type with transcript integration
 const prepareContextForQuery = (
   queryType: string,
+  query: string,
   metrics: ProcessedMetrics,
   rawRecords: CallRecord[],
   maxTokens: number = 100000
 ): string => {
+  console.log(`📝 Preparing context for query type: ${queryType}`);
+  
   let context = '';
 
   // Base statistics (always include)
@@ -255,6 +469,27 @@ const prepareContextForQuery = (
   context += `**Total Calls Analyzed:** ${metrics.totalCalls.toLocaleString()}\n`;
   context += `**Average Call Duration:** ${Math.round(metrics.avgCallDuration / 60)} minutes ${Math.round(metrics.avgCallDuration % 60)} seconds\n`;
   context += `**Average Hold Time:** ${Math.round(metrics.avgHoldTime / 60)} minutes ${Math.round(metrics.avgHoldTime % 60)} seconds\n\n`;
+
+  // Add relevant transcript samples
+  console.log(`🔍 Attempting to select relevant transcripts...`);
+  const transcriptSamples = selectRelevantTranscripts(rawRecords, queryType, query, 3);
+  console.log(`📊 Selected ${transcriptSamples.length} transcript samples`);
+  
+  if (transcriptSamples.length > 0) {
+    context += `## Relevant Call Transcript Examples\n`;
+    transcriptSamples.forEach((sample, index) => {
+      context += `### Example ${index + 1}\n`;
+      context += `**Agent:** ${sample.agent} | **Disposition:** ${sample.disposition} | **Sentiment:** ${sample.sentiment} | **Duration:** ${Math.round(sample.duration / 60)}m\n`;
+      context += `**Transcript:** "${sample.excerpt}"\n\n`;
+    });
+    context += `---\n\n`;
+    console.log(`✅ Added ${transcriptSamples.length} transcript examples to context`);
+  } else {
+    console.log(`❌ No transcript samples to add to context`);
+    // Add a debug section to the context
+    context += `## Debug Information\n`;
+    context += `**Note:** No transcript examples could be selected from the available ${rawRecords.length} records.\n\n`;
+  }
 
   switch (queryType) {
     case 'disposition':
@@ -270,7 +505,7 @@ const prepareContextForQuery = (
       context += `## Agent Performance Metrics\n`;
       Object.entries(metrics.agentMetrics)
         .sort(([, a], [, b]) => (b as any).totalCalls - (a as any).totalCalls)
-        .slice(0, 20) // Top 20 agents to stay within token limits
+        .slice(0, 15) // Reduced from 20 to make room for transcripts
         .forEach(([agent, data]) => {
           context += `**${agent}:**\n`;
           context += `- Calls: ${data.totalCalls}\n`;
@@ -320,7 +555,7 @@ const prepareContextForQuery = (
       context += `### Top Dispositions\n`;
       Object.entries(metrics.dispositionBreakdown)
         .sort(([, a], [, b]) => (b as any).count - (a as any).count)
-        .slice(0, 10)
+        .slice(0, 8) // Reduced to make room for transcripts
         .forEach(([disposition, data]) => {
           context += `- ${disposition}: ${data.count} (${data.percentage.toFixed(1)}%)\n`;
         });
@@ -348,14 +583,6 @@ const prepareContextForQuery = (
         .forEach(([disposition, data]) => {
           context += `- ${disposition}: ${data.percentage.toFixed(1)}%\n`;
         });
-      
-      // Add sample records for context
-      context += `\n**Sample Call Records:**\n`;
-      rawRecords.slice(0, 5).forEach((record, index) => {
-        context += `${index + 1}. Agent: ${record.agent_username || 'Unknown'}, `;
-        context += `Duration: ${Math.round(extractNumericValue(record.call_duration) / 60)}m, `;
-        context += `Disposition: ${record.disposition_title || 'Unknown'}\n`;
-      });
   }
 
   // Truncate if too long (rough token estimation: 1 token ≈ 4 characters)
@@ -431,33 +658,47 @@ export async function POST(request: NextRequest) {
 
     // Preprocess the data for efficient analysis
     console.log(`Processing ${recordsToAnalyze.length} call records for query type: ${queryType}`);
+    console.log(`📋 Sample record keys:`, recordsToAnalyze[0] ? Object.keys(recordsToAnalyze[0]) : 'No records');
+    console.log(`📝 First record has transcript_text:`, !!recordsToAnalyze[0]?.transcript_text);
+    if (recordsToAnalyze[0]?.transcript_text) {
+      console.log(`📄 First transcript length:`, recordsToAnalyze[0].transcript_text.length);
+      console.log(`📃 First transcript preview:`, recordsToAnalyze[0].transcript_text.substring(0, 100) + '...');
+    }
+    
     const metrics = preprocessCallData(recordsToAnalyze);
 
-    // Prepare context based on query type
-    const context = prepareContextForQuery(queryType || 'general', metrics, recordsToAnalyze);
+    // Prepare context based on query type - now includes transcripts
+    console.log(`🔧 Preparing context with query: "${query}"`);
+    const context = prepareContextForQuery(queryType || 'general', query, metrics, recordsToAnalyze);
+    console.log(`📊 Context length: ${context.length} characters`);
+    console.log(`🔍 Context includes 'Transcript'?`, context.includes('Transcript'));
+    console.log(`📋 Context preview:\n${context.substring(0, 500)}...`);
 
-    // Create the prompt
+    // Create the prompt with enhanced instructions for transcript analysis
     const systemPrompt = `You are PRISM AI, an expert call center analytics assistant. Analyze the provided call center data and answer questions with precise, actionable insights.
 
 Key Guidelines:
 - Provide specific numbers, percentages, and trends
-- Highlight actionable recommendations
+- When transcript examples are provided, reference them to support your analysis with concrete evidence
+- Use the transcript examples to illustrate patterns and validate statistical findings
+- Highlight actionable recommendations based on both metrics AND conversation patterns
 - Use professional language appropriate for call center management
 - When discussing performance, include both positive insights and improvement opportunities
 - Format responses with clear headers and bullet points for readability
+- Quote relevant parts of transcripts when they directly support your analysis
 - If data seems incomplete, mention limitations but still provide valuable insights from available data
 
 Always structure your response with:
 1. Direct answer to the question
 2. Supporting data/statistics
-3. Key insights or patterns
+3. Key insights or patterns (reference transcripts when relevant)
 4. Actionable recommendations (when relevant)`;
 
     const userPrompt = `Based on the following call center data, please answer this question: "${query}"
 
 ${context}
 
-Please provide a comprehensive analysis with specific metrics and actionable insights.`;
+Please provide a comprehensive analysis with specific metrics and actionable insights. When transcript examples are available, use them to validate and illustrate your findings.`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -473,10 +714,12 @@ Please provide a comprehensive analysis with specific metrics and actionable ins
       'Unable to generate response. Please try rephrasing your question.';
 
     // Calculate metadata
+    const transcriptCount = recordsToAnalyze.filter((r: { transcript_text: { trim: () => { (): any; new(): any; length: number; }; }; }) => r.transcript_text && r.transcript_text.trim().length > 50).length;
     const metadata = {
       model: response.model,
       tokensUsed: response.usage?.total_tokens || 0,
       dataPoints: recordsToAnalyze.length,
+      transcriptsAvailable: transcriptCount,
       processingTime,
       queryType,
       hasFullDispositions: fullRecords && fullRecords.length > 0,
