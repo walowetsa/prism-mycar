@@ -163,7 +163,8 @@ const otherNoSaleDispositions = Object.entries(dispositionCounts)
         };
       });
 
-    const dailyCallVolume = filteredRecords.reduce((acc, record) => {
+    // Enhanced daily volume calculation with sales/no sales breakdown
+    const dailyCallData = filteredRecords.reduce((acc, record) => {
       if (!record.initiation_timestamp) return acc;
 
       const date = new Date(record.initiation_timestamp).toLocaleDateString(
@@ -174,12 +175,29 @@ const otherNoSaleDispositions = Object.entries(dispositionCounts)
         }
       );
 
-      acc[date] = (acc[date] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+      if (!acc[date]) {
+        acc[date] = { totalCalls: 0, sales: 0, noSales: 0 };
+      }
 
-    const dailyVolumeData = Object.entries(dailyCallVolume)
-      .map(([date, calls]) => ({ date, calls }))
+      acc[date].totalCalls++;
+
+      // Check if it's a sale or no sale
+      if (record.disposition_title && successfulOutcomes.includes(record.disposition_title)) {
+        acc[date].sales++;
+      } else if (record.disposition_title && record.disposition_title.toLowerCase().includes('no sale')) {
+        acc[date].noSales++;
+      }
+
+      return acc;
+    }, {} as Record<string, { totalCalls: number; sales: number; noSales: number }>);
+
+    const dailyVolumeData = Object.entries(dailyCallData)
+      .map(([date, data]) => ({ 
+        date, 
+        totalCalls: data.totalCalls,
+        sales: data.sales,
+        noSales: data.noSales
+      }))
       .sort(
         (a, b) =>
           new Date(a.date + ", 2024").getTime() -
@@ -402,6 +420,8 @@ const otherNoSaleDispositions = Object.entries(dispositionCounts)
           </div>
         </div>
       </div>
+
+      {/* Enhanced Daily Call Volume Chart with Sales/No Sales trends */}
       {statistics.dailyVolumeData.length > 0 && (
         <div className="bg-black/60 p-6 rounded-lg shadow-sm">
           <h3 className="text-lg font-semibold text-neutral-200 mb-4">
@@ -413,9 +433,9 @@ const otherNoSaleDispositions = Object.entries(dispositionCounts)
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={statistics.dailyVolumeData}>
                 <defs>
-                  {/* Line gradient */}
+                  {/* Total calls gradient */}
                   <linearGradient
-                    id="lineGradient"
+                    id="totalCallsGradient"
                     x1="0%"
                     y1="0%"
                     x2="100%"
@@ -436,17 +456,63 @@ const otherNoSaleDispositions = Object.entries(dispositionCounts)
                     color: "#d1d5db",
                   }}
                   labelStyle={{ color: "#d1d5db" }}
+                  formatter={(value: number, name: string) => {
+                    const displayName = name === 'totalCalls' ? 'Total Calls' 
+                                      : name === 'sales' ? 'Sales' 
+                                      : 'No Sales';
+                    return [value, displayName];
+                  }}
                 />
+                
+                {/* Total Calls Line */}
                 <Line
                   type="monotone"
-                  dataKey="calls"
-                  stroke="url(#lineGradient)"
-                  strokeWidth={2}
+                  dataKey="totalCalls"
+                  stroke="url(#totalCallsGradient)"
+                  strokeWidth={3}
                   dot={{ fill: "#d1d5db", strokeWidth: 0, r: 0 }}
                   activeDot={{ r: 0, fill: "#d1d5db" }}
                 />
+                
+                {/* Sales Line */}
+                <Line
+                  type="monotone"
+                  dataKey="sales"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  strokeDasharray="5 5"
+                  dot={{ fill: "#10b981", strokeWidth: 0, r: 3 }}
+                  activeDot={{ r: 5, fill: "#10b981" }}
+                />
+                
+                {/* No Sales Line */}
+                <Line
+                  type="monotone"
+                  dataKey="noSales"
+                  stroke="#ef4444"
+                  strokeWidth={2}
+                  strokeDasharray="3 3"
+                  dot={{ fill: "#ef4444", strokeWidth: 0, r: 3 }}
+                  activeDot={{ r: 5, fill: "#ef4444" }}
+                />
               </LineChart>
             </ResponsiveContainer>
+          </div>
+          
+          {/* Legend */}
+          <div className="mt-4 flex justify-center gap-6">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)]"></div>
+              <span className="text-sm text-neutral-200">Total Calls</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 bg-green-500" style={{ borderTop: "2px dashed #10b981" }}></div>
+              <span className="text-sm text-neutral-200">Sales</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 bg-red-500" style={{ borderTop: "2px dashed #ef4444" }}></div>
+              <span className="text-sm text-neutral-200">No Sales</span>
+            </div>
           </div>
         </div>
       )}
