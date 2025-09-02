@@ -204,6 +204,23 @@ const otherNoSaleDispositions = Object.entries(dispositionCounts)
           new Date(b.date + ", 2024").getTime()
       );
 
+    // NEW: Hourly call volume calculation
+    const hourlyCallData = filteredRecords.reduce((acc, record) => {
+      if (!record.initiation_timestamp) return acc;
+      
+      const hour = new Date(record.initiation_timestamp).getHours();
+      acc[hour] = (acc[hour] || 0) + 1;
+      
+      return acc;
+    }, {} as Record<number, number>);
+
+    // Convert to array format for chart (24 hours)
+    const hourlyVolumeData = Array.from({ length: 24 }, (_, hour) => ({
+      hour: hour.toString().padStart(2, '0') + ':00',
+      calls: hourlyCallData[hour] || 0,
+      hourValue: hour // Keep numeric value for sorting/calculations
+    }));
+
     const sentimentCounts = { POSITIVE: 0, NEUTRAL: 0, NEGATIVE: 0 };
 
     filteredRecords.forEach((record) => {
@@ -252,6 +269,7 @@ const otherNoSaleDispositions = Object.entries(dispositionCounts)
       ppiNoSaleCounts,
       otherNoSaleDispositions,
       dailyVolumeData,
+      hourlyVolumeData, // NEW
       sentimentData,
     };
   }, [filteredRecords, successfulOutcomes]);
@@ -517,6 +535,82 @@ const otherNoSaleDispositions = Object.entries(dispositionCounts)
         </div>
       )}
 
+      {/* NEW: Hourly Call Volume Chart */}
+      {statistics.hourlyVolumeData.some(d => d.calls > 0) && (
+        <div className="bg-black/60 p-6 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold text-neutral-200 mb-4">
+            <span className="tracking-wide bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] bg-clip-text text-transparent">
+              Call Hours
+            </span>
+          </h3>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={statistics.hourlyVolumeData}>
+                <defs>
+                  {/* Hourly calls gradient */}
+                  <linearGradient
+                    id="hourlyCallsGradient"
+                    x1="0%"
+                    y1="0%"
+                    x2="100%"
+                    y2="0%"
+                  >
+                    <stop offset="0%" stopColor="var(--color-prism-blue)" />
+                    <stop offset="100%" stopColor="var(--color-prism-orange)" />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis 
+                  dataKey="hour" 
+                  stroke="#d1d5db" 
+                  fontSize={10}
+                  interval={1}
+                  angle={-45}
+                  textAnchor="end"
+                  height={60}
+                />
+                <YAxis stroke="#d1d5db" fontSize={12} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#000",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "8px",
+                    color: "#d1d5db",
+                  }}
+                  labelStyle={{ color: "#d1d5db" }}
+                  formatter={(value: number) => [value, "Calls"]}
+                  labelFormatter={(label) => `Time: ${label}`}
+                />
+                
+                {/* Hourly Calls Line */}
+                <Line
+                  type="monotone"
+                  dataKey="calls"
+                  stroke="url(#hourlyCallsGradient)"
+                  strokeWidth={3}
+                  dot={{ fill: "#d1d5db", strokeWidth: 2, r: 0 }}
+                  activeDot={{ r: 0, fill: "#d1d5db", stroke: "var(--color-prism-blue)", strokeWidth: 2 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          
+          {/* Peak hours summary */}
+          <div className="mt-4 flex justify-center">
+            <div className="text-sm text-neutral-200">
+              Peak Hour: {
+                (() => {
+                  const peakHour = statistics.hourlyVolumeData.reduce((prev, current) => 
+                    prev.calls > current.calls ? prev : current
+                  );
+                  return `${peakHour.hour} (${peakHour.calls} calls)`;
+                })()
+              }
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {statistics.mtfNoSaleCounts.length > 0 && (
         <div className="bg-black/60 p-6 rounded-lg shadow-sm">
@@ -564,7 +658,7 @@ const otherNoSaleDispositions = Object.entries(dispositionCounts)
         <div className="bg-black/60 p-6 rounded-lg shadow-sm">
           <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
             <span className="tracking-wide bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] bg-clip-text text-transparent">
-              No Sale - PII
+              No Sale - PPI
             </span>
           </h3>
           <div className="space-y-3">
