@@ -36,7 +36,7 @@ const InsightsStatsDashboard: React.FC<InsightsStatsDashboardProps> = ({
   // calc stats
   const statistics = useMemo(() => {
     const totalCalls = filteredRecords.length;
-    const successfulCalls = filteredRecords.filter(
+    const successfulCalls: number = filteredRecords.filter(
       (record) =>
         record.disposition_title &&
         successfulOutcomes.includes(record.disposition_title)
@@ -97,6 +97,71 @@ const InsightsStatsDashboard: React.FC<InsightsStatsDashboardProps> = ({
     const topDispositions = Object.entries(dispositionCounts)
       .sort(([, a], [, b]) => b - a)
       .slice(0, 5);
+
+    const mtfNoSaleDispositions = [
+      "No Sale - MTF - Out of Zone",
+      "No Sale - MTF - Same Day Request", 
+      "No Sale - MTF - Saturday Request",
+      "No Sale - MTF - Van Availability"
+    ];
+
+    const ppiNoSaleDispositions = [
+      "No Sale - PPI - Out of Zone",
+      "No Sale - PPI - Same Day Request", 
+      "No Sale - PPI - Saturday Request",
+      "No Sale - PPI - Van Availability"
+    ];
+
+    const mtfNoSaleCounts = mtfNoSaleDispositions.map(disposition => [
+      disposition,
+      dispositionCounts[disposition] || 0
+    ] as [string, number]).filter(([, count]) => count > 0);
+
+     const ppiNoSaleCounts = ppiNoSaleDispositions.map(disposition => [
+      disposition,
+      dispositionCounts[disposition] || 0
+    ] as [string, number]).filter(([, count]) => count > 0);
+
+const otherNoSaleDispositions = Object.entries(dispositionCounts)
+      .filter(([disposition, count]) => {
+        return disposition.toLowerCase().includes('no sale') && 
+               !disposition.toLowerCase().includes('mtf') && 
+               !disposition.toLowerCase().includes('ppi') &&
+               count > 0;
+      })
+      .map(([disposition, count], index, array) => {
+        // Calculate gradient color based on position
+        const ratio = array.length > 1 ? index / (array.length - 1) : 0;
+        const interpolateColor = (start: string, end: string, factor: number) => {
+          const startRgb = hexToRgb(start);
+          const endRgb = hexToRgb(end);
+          if (!startRgb || !endRgb) return start;
+          
+          const r = Math.round(startRgb.r + factor * (endRgb.r - startRgb.r));
+          const g = Math.round(startRgb.g + factor * (endRgb.g - startRgb.g));
+          const b = Math.round(startRgb.b + factor * (endRgb.b - startRgb.b));
+          
+          return `rgb(${r}, ${g}, ${b})`;
+        };
+        
+        const hexToRgb = (hex: string) => {
+          const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+          return result ? {
+            r: parseInt(result[1], 16),
+            g: parseInt(result[2], 16),
+            b: parseInt(result[3], 16)
+          } : null;
+        };
+        
+        // Using the prism blue to orange gradient colors
+        const color = interpolateColor('#2059fd', '#ee5825', ratio);
+        
+        return {
+          name: disposition,
+          count: count,
+          color: color
+        };
+      });
 
     const dailyCallVolume = filteredRecords.reduce((acc, record) => {
       if (!record.initiation_timestamp) return acc;
@@ -165,6 +230,9 @@ const InsightsStatsDashboard: React.FC<InsightsStatsDashboardProps> = ({
       averageDurationSeconds,
       callsByAgent,
       topDispositions,
+      mtfNoSaleCounts,
+      ppiNoSaleCounts,
+      otherNoSaleDispositions,
       dailyVolumeData,
       sentimentData,
     };
@@ -334,29 +402,6 @@ const InsightsStatsDashboard: React.FC<InsightsStatsDashboardProps> = ({
           </div>
         </div>
       </div>
-
-      {statistics.totalCalls > 0 && (
-        <div className="bg-black/60 p-6 rounded-lg shadow-sm">
-          <h3 className="text-lg font-semibold text-neutral-200 mb-4">
-            <span className="tracking-wide bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] bg-clip-text text-transparent">
-              Sales Generated
-            </span>
-          </h3>
-          <div className="flex items-center gap-4">
-            <div className="flex-1 bg-neutral-800 rounded-full h-4 overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] h-full transition-all duration-500 rounded-r-full"
-                style={{ width: `${statistics.successRate}%` }}
-              ></div>
-            </div>
-            <div className="text-sm text-neutral-200">
-              {statistics.successfulCalls}/{statistics.totalCalls} Sales
-              generated.
-            </div>
-          </div>
-        </div>
-      )}
-
       {statistics.dailyVolumeData.length > 0 && (
         <div className="bg-black/60 p-6 rounded-lg shadow-sm">
           <h3 className="text-lg font-semibold text-neutral-200 mb-4">
@@ -405,6 +450,135 @@ const InsightsStatsDashboard: React.FC<InsightsStatsDashboardProps> = ({
           </div>
         </div>
       )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {statistics.mtfNoSaleCounts.length > 0 && (
+        <div className="bg-black/60 p-6 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
+            <span className="tracking-wide bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] bg-clip-text text-transparent">
+              No Sale - MTF
+            </span>
+          </h3>
+          <div className="space-y-3">
+            {statistics.mtfNoSaleCounts.map(([disposition, count]) => (
+              <div
+                key={disposition}
+                className="flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span
+                    className="text-sm text-neutral-200 truncate"
+                    title={disposition}
+                  >
+                    {disposition}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 ml-2">
+                  <div
+                    className="bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] h-2 rounded"
+                    style={{
+                      width: `${Math.max(
+                        (count / Math.max(...statistics.mtfNoSaleCounts.map(([, c]) => c))) * 100,
+                        5
+                      )}px`,
+                      minWidth: "20px",
+                    }}
+                  ></div>
+                  <span className="text-sm font-medium text-neutral-200 w-8 text-right">
+                    {count}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {statistics.ppiNoSaleCounts.length > 0 && (
+        <div className="bg-black/60 p-6 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
+            <span className="tracking-wide bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] bg-clip-text text-transparent">
+              No Sale - PII
+            </span>
+          </h3>
+          <div className="space-y-3">
+            {statistics.ppiNoSaleCounts.map(([disposition, count]) => (
+              <div
+                key={disposition}
+                className="flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span
+                    className="text-sm text-neutral-200 truncate"
+                    title={disposition}
+                  >
+                    {disposition}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 ml-2">
+                  <div
+                    className="bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] h-2 rounded"
+                    style={{
+                      width: `${Math.max(
+                        (count / Math.max(...statistics.ppiNoSaleCounts.map(([, c]) => c))) * 100,
+                        5
+                      )}px`,
+                      minWidth: "20px",
+                    }}
+                  ></div>
+                  <span className="text-sm font-medium text-neutral-200 w-8 text-right">
+                    {count}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+</div>{statistics.otherNoSaleDispositions.length > 0 && (
+        <div className="bg-black/60 p-6 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold text-neutral-200 mb-4">
+            <span className="tracking-wide bg-gradient-to-r from-[var(--color-prism-blue)] to-[var(--color-prism-orange)] bg-clip-text text-transparent">
+              Other No Sale Dispositions
+            </span>
+          </h3>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={statistics.otherNoSaleDispositions}
+                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis 
+                  dataKey="name" 
+                  stroke="#d1d5db" 
+                  fontSize={8}
+                  angle={45}
+                  textAnchor="start"
+                  height={100}
+                />
+                <YAxis stroke="#d1d5db" fontSize={12} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#000",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "8px",
+                    color: "#d1d5db",
+                  }}
+                  labelStyle={{ color: "#d1d5db" }}
+                  formatter={(value: number) => [value, "Call Count"]}
+                />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {statistics.otherNoSaleDispositions.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
 
       {statistics.sentimentData.some((item) => item.count > 0) && (
         <div className="bg-black/60 p-6 rounded-lg shadow-sm">
