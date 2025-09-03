@@ -91,6 +91,27 @@ const RATE_LIMIT_CONFIG = {
   backoffMultiplier: 2,
 };
 
+// NEW: Specific tire sizes to search for when tire stock queries are detected
+const COMMON_TIRE_SIZES = [
+  "195/65R15",
+  "205/55R16",
+  "215/60R16", 
+  "215/55R17",
+  "225/45R17",
+  "195/60R14", 
+  "255/45R19", 
+  "245/40R20", 
+  "285/35R20", 
+  "195/65/15",
+  "205/55/16",
+  "215/60/16", 
+  "215/55/17",
+  "225/45/17",
+  "195/60/14", 
+  "245/40/20", 
+  "285/35/20"   
+];
+
 // NEW: Enhanced call center and automotive synonyms for better matching
 const CALL_CENTER_SYNONYMS: Record<string, string[]> = {
   'angry': ['mad', 'upset', 'furious', 'irritated', 'frustrated', 'annoyed', 'irate'],
@@ -116,15 +137,78 @@ const CALL_CENTER_SYNONYMS: Record<string, string[]> = {
   'quote': ['estimate', 'price', 'cost', 'pricing'],
   'warranty': ['guarantee', 'coverage', 'protection'],
   'appointment': ['booking', 'schedule', 'reservation', 'slot'],
+  // NEW: Tire and stock related terms
+  'stock': ['inventory', 'availability', 'available', 'supply', 'in stock', 'out of stock'],
+  'size': ['sizes', 'dimension', 'dimensions', 'specification', 'specs'],
+  'common': ['popular', 'frequent', 'usual', 'typical', 'standard'],
+  'unavailable': ['out of stock', 'not available', 'sold out', 'backordered', 'no stock'],
 };
 
-// NEW: Enhanced word expansion function with phrase decomposition
+// NEW: Function to detect tire size queries and extract tire size patterns
+const detectTireSizeQuery = (query: string): { isTireQuery: boolean; detectedSizes: string[] } => {
+  // const lowerQuery = query.toLowerCase();
+  
+  // Patterns that indicate tire size queries
+  const tireSizePatterns = [
+    /tyre?\s*size/i,
+    /tire?\s*size/i,
+    /stock.*tyre/i,
+    /stock.*tire/i,
+    /out\s*of\s*stock.*tyre/i,
+    /out\s*of\s*stock.*tire/i,
+    /unavailable.*tyre/i,
+    /unavailable.*tire/i,
+    /common.*tyre.*size/i,
+    /common.*tire.*size/i,
+    /popular.*tyre/i,
+    /popular.*tire/i,
+    /\d{3}\/\d{2}R?\d{2}/i, // Direct tire size pattern like 195/65R15
+  ];
+  
+  const isTireQuery = tireSizePatterns.some(pattern => pattern.test(query));
+  
+  // Extract any tire sizes mentioned in the query
+  const tireSizeRegex = /\b\d{3}\/\d{2}R?\d{2}\b/gi;
+  const detectedSizes = query.match(tireSizeRegex) || [];
+  
+  return { isTireQuery, detectedSizes };
+};
+
+// NEW: Enhanced word expansion function with phrase decomposition and tire size handling
 const expandKeyword = (keyword: string): string[] => {
   const variations = new Set<string>();
   const lower = keyword.toLowerCase().trim();
   
   // Add the original term
   variations.add(lower);
+  
+  // Check if this is a tire size pattern
+  const tireSizePattern = /^\d{3}\/\d{2}R?\d{2}$/i;
+  if (tireSizePattern.test(keyword)) {
+    // For tire sizes, add variations with and without 'R'
+    variations.add(keyword); // Original
+    variations.add(keyword.toLowerCase());
+    variations.add(keyword.toUpperCase());
+    
+    // Add version without R if it has R
+    if (keyword.includes('R') || keyword.includes('r')) {
+      const withoutR = keyword.replace(/r/gi, '');
+      variations.add(withoutR);
+      variations.add(withoutR.toLowerCase());
+      variations.add(withoutR.toUpperCase());
+    } else {
+      // Add version with R if it doesn't have R
+      const parts = keyword.match(/(\d{3}\/\d{2})(\d{2})/);
+      if (parts) {
+        const withR = `${parts[1]}R${parts[2]}`;
+        variations.add(withR);
+        variations.add(withR.toLowerCase());
+        variations.add(withR.toUpperCase());
+      }
+    }
+    
+    return Array.from(variations);
+  }
   
   // PHRASE DECOMPOSITION: If this is a multi-word phrase, break it down
   if (lower.includes(' ')) {
@@ -241,6 +325,12 @@ const expandSingleWord = (word: string): string[] => {
 
 // NEW: Fuzzy matching function for handling typos
 const createFuzzyRegex = (term: string): RegExp => {
+  // For tire sizes, use exact matching
+  const tireSizePattern = /^\d{3}\/\d{2}R?\d{2}$/i;
+  if (tireSizePattern.test(term)) {
+    return new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+  }
+  
   // For short terms, use exact matching
   if (term.length <= 3) {
     return new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
@@ -312,13 +402,18 @@ const extractSentiment = (sentimentAnalysis: any): string => {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Enhanced query detection
+// Enhanced query detection with tire size support
 const detectQueryType = (query: string): { 
   type: string; 
   isKeywordSearch: boolean; 
-  extractedKeywords: string[] 
+  extractedKeywords: string[];
+  isTireQuery: boolean;
 } => {
   const lowerQuery = query.toLowerCase();
+  
+  // Check for tire size queries first
+  const tireDetection = detectTireSizeQuery(query);
+  const isTireQuery = tireDetection.isTireQuery;
   
   // Keyword search detection patterns
   const keywordSearchPatterns = [
@@ -338,18 +433,40 @@ const detectQueryType = (query: string): {
     /\b\w+\s+\w+\b.*offer/i, // Product/service offers
     /\b\w+\s+\w+\b.*issue/i, // Specific issues
     /\b\w+\s+\w+\b.*problem/i, // Problems
+    // NEW: Tire-specific patterns
+    /tyre?\s*size/i,
+    /tire?\s*size/i,
+    /stock.*tyre/i,
+    /stock.*tire/i,
+    /out\s*of\s*stock/i,
+    /unavailable.*tyre/i,
+    /unavailable.*tire/i,
+    /common.*tyre/i,
+    /common.*tire/i,
   ];
 
-  const isKeywordSearch = keywordSearchPatterns.some(pattern => pattern.test(query));
+  const isKeywordSearch = keywordSearchPatterns.some(pattern => pattern.test(query)) || isTireQuery;
   
   let extractedKeywords: string[] = [];
   if (isKeywordSearch) {
-    extractedKeywords = extractKeywordsFromQuery(query);
+    if (isTireQuery) {
+      // For tire queries, use the predefined tire sizes plus any keywords from the query
+      extractedKeywords = [...COMMON_TIRE_SIZES, ...tireDetection.detectedSizes];
+      // Add some general tire/stock related terms
+      const generalTireTerms = extractKeywordsFromQuery(query).filter(keyword => 
+        !COMMON_TIRE_SIZES.includes(keyword)
+      );
+      extractedKeywords = [...extractedKeywords, ...generalTireTerms];
+    } else {
+      extractedKeywords = extractKeywordsFromQuery(query);
+    }
   }
 
   // Determine base query type
   let type = 'general';
-  if (isKeywordSearch) {
+  if (isTireQuery) {
+    type = 'tire_size_search';
+  } else if (isKeywordSearch) {
     type = 'keyword_search';
   } else if (lowerQuery.includes('disposition') || lowerQuery.includes('outcome')) {
     type = 'disposition';
@@ -367,7 +484,7 @@ const detectQueryType = (query: string): {
     type = 'trends';
   }
 
-  return { type, isKeywordSearch, extractedKeywords };
+  return { type, isKeywordSearch, extractedKeywords, isTireQuery };
 };
 
 // ENHANCED: Much better phrase decomposition with separate individual word search terms
@@ -419,7 +536,7 @@ const extractKeywordsFromQuery = (query: string): string[] => {
     
     // Add 2-word phrases if they seem meaningful and automotive/service related
     if (phrase2.length > 5 && !processedTerms.has(phrase2.toLowerCase())) {
-      const isAutomotivePhrase = /\b(wheel|tire|brake|oil|engine|alignment|service|repair|quote|warranty|appointment|battery|transmission|filter|fluid)\b/i.test(phrase2);
+      const isAutomotivePhrase = /\b(wheel|tire|tyre|brake|oil|engine|alignment|service|repair|quote|warranty|appointment|battery|transmission|filter|fluid|stock|size)\b/i.test(phrase2);
       const isServicePhrase = /\b(customer|billing|account|refund|cancel|support|help|delivery|payment|schedule)\b/i.test(phrase2);
       
       if (isAutomotivePhrase || isServicePhrase || phrase2.split(' ').every(w => w.length > 4)) {
@@ -440,7 +557,7 @@ const extractKeywordsFromQuery = (query: string): string[] => {
     
     // Add 3-word phrases if they seem very meaningful
     if (i < words.length - 2 && phrase3.length > 10 && phrase3.length < 30 && !processedTerms.has(phrase3.toLowerCase())) {
-      const isAutomotivePhrase = /\b(wheel|tire|brake|oil|engine|alignment|service|repair|quote|warranty|appointment|battery|transmission|filter|fluid)\b/i.test(phrase3);
+      const isAutomotivePhrase = /\b(wheel|tire|tyre|brake|oil|engine|alignment|service|repair|quote|warranty|appointment|battery|transmission|filter|fluid|stock|size)\b/i.test(phrase3);
       
       if (isAutomotivePhrase) {
         keywords.push(phrase3); // Add phrase as separate search term  
@@ -463,7 +580,7 @@ const extractKeywordsFromQuery = (query: string): string[] => {
   words.forEach(word => {
     const lowerWord = word.toLowerCase();
     if (!processedTerms.has(lowerWord) && 
-        (word.length > 3 || ['fee', 'pay', 'buy', 'new', 'old', 'bad', 'mad', 'oil', 'gas', 'air'].includes(lowerWord))) {
+        (word.length > 3 || ['fee', 'pay', 'buy', 'new', 'old', 'bad', 'mad', 'oil', 'gas', 'air', 'tire', 'tyre'].includes(lowerWord))) {
       keywords.push(word);
       processedTerms.add(lowerWord);
     }
@@ -492,7 +609,7 @@ const extractKeywordsFromQuery = (query: string): string[] => {
     .slice(0, 15); // Increased limit to accommodate phrase decomposition
 };
 
-// ENHANCED: Much more sophisticated keyword search with individual word counting
+// ENHANCED: Much more sophisticated keyword search with individual word counting and tire size support
 const performKeywordSearch = (
   records: CallRecord[],
   searchTerms: string[]
@@ -630,7 +747,7 @@ const performKeywordSearch = (
   return result;
 };
 
-// Smart transcript selection (updated to handle enhanced keyword search)
+// Smart transcript selection (updated to handle enhanced keyword search and tire queries)
 const selectRelevantTranscripts = (
   records: CallRecord[],
   queryType: string,
@@ -656,7 +773,7 @@ const selectRelevantTranscripts = (
   console.log(`Available transcripts after filtering: ${availableTranscripts.length}`);
 
   if (availableTranscripts.length === 0) {
-    console.log(`⚠ No transcripts available for analysis`);
+    console.log(`⚠️ No transcripts available for analysis`);
     return [];
   }
 
@@ -674,8 +791,14 @@ const selectRelevantTranscripts = (
     });
 
     // Enhanced scoring for keyword searches using the new expansion
-    if (queryType === 'keyword_search') {
+    if (queryType === 'keyword_search' || queryType === 'tire_size_search') {
       const searchTerms = extractKeywordsFromQuery(query);
+      
+      // For tire queries, add the common tire sizes to search terms
+      if (queryType === 'tire_size_search') {
+        searchTerms.push(...COMMON_TIRE_SIZES);
+      }
+      
       searchTerms.forEach(term => {
         const expandedTerms = expandKeyword(term);
         expandedTerms.forEach(expandedTerm => {
@@ -908,7 +1031,7 @@ const preprocessCallData = (records: CallRecord[]): ProcessedMetrics => {
   };
 };
 
-// ENHANCED: Updated context preparation with expanded terms info
+// ENHANCED: Updated context preparation with expanded terms info and tire size support
 const prepareContextForQuery = (
   detectedQueryType: string,
   query: string,
@@ -926,12 +1049,12 @@ const prepareContextForQuery = (
   context += `**Average Call Duration:** ${Math.round(metrics.avgCallDuration / 60)} minutes ${Math.round(metrics.avgCallDuration % 60)} seconds\n`;
   context += `**Average Hold Time:** ${Math.round(metrics.avgHoldTime / 60)} minutes ${Math.round(metrics.avgHoldTime % 60)} seconds\n\n`;
 
-  // Handle enhanced keyword search results
-  if (detectedQueryType === 'keyword_search' && keywordSearchResults) {
+  // Handle enhanced keyword search results (including tire size searches)
+  if ((detectedQueryType === 'keyword_search' || detectedQueryType === 'tire_size_search') && keywordSearchResults) {
     const totalCallsPercentage = ((keywordSearchResults.matchingRecords.length / metrics.totalCalls) * 100);
     const transcriptCallsPercentage = keywordSearchResults.searchStats.matchPercentage;
     
-    context += `## Enhanced Keyword Search Results\n`;
+    context += `## ${detectedQueryType === 'tire_size_search' ? 'Tire Size Stock Analysis' : 'Enhanced Keyword Search Results'}\n`;
     context += `**Original Search Terms:** ${keywordSearchResults.searchTerms.join(', ')}\n`;
     context += `**Expanded to ${keywordSearchResults.expandedTerms.length} Variations:** ${keywordSearchResults.expandedTerms.slice(0, 15).join(', ')}${keywordSearchResults.expandedTerms.length > 15 ? '...' : ''}\n`;
     context += `**CALL COUNT WITH KEYWORDS:** ${keywordSearchResults.matchingRecords.length} calls\n`;
@@ -942,7 +1065,7 @@ const prepareContextForQuery = (
     context += `**Records with Transcript Data:** ${keywordSearchResults.searchStats.recordsWithTranscripts}\n\n`;
 
     if (keywordSearchResults.matchingRecords.length > 0) {
-      context += `### Top Matching Records (Enhanced Matching)\n`;
+      context += `### Top Matching Records ${detectedQueryType === 'tire_size_search' ? '(Tire Size Mentions)' : '(Enhanced Matching)'}\n`;
       keywordSearchResults.matchingRecords.slice(0, 10).forEach((match, index) => {
         context += `#### Match ${index + 1}\n`;
         context += `**Agent:** ${match.agent} | **Disposition:** ${match.disposition} | **Sentiment:** ${match.sentiment}\n`;
@@ -956,6 +1079,33 @@ const prepareContextForQuery = (
         }
         context += `\n`;
       });
+      
+      // Special analysis for tire size queries
+      if (detectedQueryType === 'tire_size_search') {
+        context += `### Tire Size Analysis Summary\n`;
+        const tireSizeMatches: Record<string, number> = {};
+        
+        keywordSearchResults.matchingRecords.forEach(match => {
+          match.matchedVariations.forEach(variation => {
+            COMMON_TIRE_SIZES.forEach(tireSize => {
+              if (variation.toLowerCase().includes(tireSize.toLowerCase()) || 
+                  tireSize.toLowerCase().includes(variation.toLowerCase())) {
+                tireSizeMatches[tireSize] = (tireSizeMatches[tireSize] || 0) + 1;
+              }
+            });
+          });
+        });
+        
+        if (Object.keys(tireSizeMatches).length > 0) {
+          context += `**Individual Tire Size Mentions:**\n`;
+          Object.entries(tireSizeMatches)
+            .sort(([, a], [, b]) => b - a)
+            .forEach(([size, count]) => {
+              context += `- ${size}: ${count} mentions\n`;
+            });
+        }
+        context += `\n`;
+      }
     }
     context += `---\n\n`;
   } else {
@@ -975,6 +1125,7 @@ const prepareContextForQuery = (
 
   // Rest of context preparation based on query type (existing logic)
   switch (detectedQueryType) {
+    case 'tire_size_search':
     case 'keyword_search':
       // Already handled above
       break;
@@ -1059,7 +1210,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'OpenAI API key not configured' }, { status: 500 });
     }
 
-    // Automatic query type detection with enhanced keyword handling
+    // Automatic query type detection with enhanced keyword handling and tire size support
     const detectedQuery = detectQueryType(query);
     const actualQueryType = detectedQuery.type;
     
@@ -1068,6 +1219,7 @@ export async function POST(request: NextRequest) {
     console.log(`🤖 Backend detected type: ${actualQueryType}`);
     console.log(`🔎 Is keyword search: ${detectedQuery.isKeywordSearch}`);
     console.log(`🏷️ Extracted keywords: ${detectedQuery.extractedKeywords.join(', ')}`);
+    console.log(`🚗 Is tire query: ${detectedQuery.isTireQuery}`);
     
     // Debug the available data
     console.log(`📊 Data available:`);
@@ -1075,10 +1227,10 @@ export async function POST(request: NextRequest) {
     console.log(`  - callData?.data?.sampleRecords: ${callData?.data?.sampleRecords ? callData.data.sampleRecords.length : 'null'} records`);
     console.log(`  - callData?.data?.fullRecords: ${callData?.data?.fullRecords ? callData.data.fullRecords.length : 'null'} records`);
 
-    // For keyword searches, we MUST have access to all records
+    // For keyword searches (including tire size searches), we MUST have access to all records
     let allAvailableRecords: CallRecord[] = [];
     
-    if (actualQueryType === 'keyword_search' && detectedQuery.isKeywordSearch) {
+    if ((actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search') && detectedQuery.isKeywordSearch) {
       // Try multiple sources for complete dataset
       if (fullRecords && fullRecords.length > 100) {
         allAvailableRecords = fullRecords;
@@ -1111,8 +1263,8 @@ export async function POST(request: NextRequest) {
     let keywordSearchResults: KeywordSearchResult | undefined;
     let recordsToAnalyze = allAvailableRecords;
     
-    // Perform ENHANCED keyword search on ALL available records
-    if (actualQueryType === 'keyword_search' && detectedQuery.extractedKeywords.length > 0) {
+    // Perform ENHANCED keyword search on ALL available records (including tire size searches)
+    if ((actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search') && detectedQuery.extractedKeywords.length > 0) {
       console.log(`🔍 Performing ENHANCED keyword search on ALL ${allAvailableRecords.length} records...`);
       
       // Search ALL available records for accurate counts with enhanced matching
@@ -1158,7 +1310,7 @@ export async function POST(request: NextRequest) {
     let metrics = preprocessCallData(recordsToAnalyze);
     
     // For keyword searches, override totalCalls to reflect the complete dataset
-    if (actualQueryType === 'keyword_search' && keywordSearchResults) {
+    if ((actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search') && keywordSearchResults) {
       metrics = {
         ...metrics,
         totalCalls: allAvailableRecords.length, // Use complete dataset count
@@ -1175,7 +1327,7 @@ export async function POST(request: NextRequest) {
       keywordSearchResults
     );
 
-    // Enhanced system prompt for better keyword search handling
+    // Enhanced system prompt for better keyword search handling including tire sizes
     const systemPrompt = `You are PRISM AI, an expert call center analytics assistant with advanced keyword matching capabilities. You use enhanced search algorithms that include plurals, synonyms, word variations, and fuzzy matching to provide comprehensive insights.
 
 Key Guidelines:
@@ -1201,6 +1353,13 @@ Enhanced Search Features:
 - Allows fuzzy matching for minor typos and variations
 - Searches phrases with flexibility for natural conversation flow
 - For multi-word phrases like "wheel alignment", searches for both the complete phrase AND individual words ("wheel", "alignment") with all their variations
+- For tire size queries, automatically searches for specific tire sizes: 195/65R15, 205/55R16, 215/60R16, 215/55R17, 225/45R17, 195/60R14, 255/45R19, 245/40R20, 285/35R20
+
+Special Tire Size Analysis:
+- When detecting tire size or stock-related queries, automatically searches for common tire sizes
+- Provides specific counts for each tire size mentioned in calls
+- Analyzes stock availability patterns and customer demand
+- Identifies which tire sizes are most frequently requested or mentioned as unavailable
 
 Always structure your response with:
 1. Direct answer to the question (for keyword searches: lead with "X calls (Y.Z% of total calls) contained variations of [keywords]")
@@ -1213,7 +1372,7 @@ Always structure your response with:
 
 ${context}
 
-Please provide a comprehensive analysis with specific metrics and actionable insights. When enhanced keyword search results are available, explain the scope of matching used and use the examples to validate and illustrate your findings.`;
+Please provide a comprehensive analysis with specific metrics and actionable insights. When enhanced keyword search results are available, explain the scope of matching used and use the examples to validate and illustrate your findings.${actualQueryType === 'tire_size_search' ? ' This is a tire size analysis - provide specific insights about tire stock patterns and customer demand for different tire sizes.' : ''}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1240,8 +1399,9 @@ Please provide a comprehensive analysis with specific metrics and actionable ins
       processingTime,
       queryType: actualQueryType, // Return the detected type
       detectedKeywordSearch: detectedQuery.isKeywordSearch,
+      detectedTireQuery: detectedQuery.isTireQuery,
       hasFullDispositions: fullRecords && fullRecords.length > 0,
-      enhancedKeywordSearch: actualQueryType === 'keyword_search',
+      enhancedKeywordSearch: actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search',
       keywordSearchResults: keywordSearchResults ? {
         totalMatches: keywordSearchResults.totalMatches,
         recordsWithMatches: keywordSearchResults.matchingRecords.length,
