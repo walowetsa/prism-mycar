@@ -142,6 +142,36 @@ const CALL_CENTER_SYNONYMS: Record<string, string[]> = {
   'size': ['sizes', 'dimension', 'dimensions', 'specification', 'specs'],
   'common': ['popular', 'frequent', 'usual', 'typical', 'standard'],
   'unavailable': ['out of stock', 'not available', 'sold out', 'backordered', 'no stock'],
+  // NEW: Mobile tyre fitting synonyms
+  'mobile': ['mobile tyre', 'mobile tire', 'mobile service', 'on-site', 'home service', 'mobile fitting'],
+  'fitting': ['installation', 'mounting', 'changing', 'replacing', 'fit'],
+  'appointment': ['booking', 'schedule', 'reservation', 'slot', 'visit'],
+};
+
+// NEW: Function to detect Mobile Tyre Fitting (MTF) queries
+const detectMTFQuery = (query: string): boolean => {
+  const lowerQuery = query.toLowerCase();
+  
+  // Patterns that indicate MTF-related queries
+  const mtfPatterns = [
+    /mobile\s*(tyre|tire)\s*fitting/i,
+    /mobile\s*(tyre|tire)\s*service/i,
+    /mobile\s*(tyre|tire)\s*appointment/i,
+    /mobile\s*(tyre|tire)\s*booking/i,
+    /mtf\s*appointment/i,
+    /mtf\s*booking/i,
+    /mtf\s*service/i,
+    /mobile.*fitting.*appointment/i,
+    /mobile.*service.*appointment/i,
+    /on.?site.*tyre/i,
+    /on.?site.*tire/i,
+    /home.*tyre.*service/i,
+    /home.*tire.*service/i,
+    /mobile.*tyre.*installation/i,
+    /mobile.*tire.*installation/i,
+  ];
+  
+  return mtfPatterns.some(pattern => pattern.test(query));
 };
 
 // NEW: Function to detect tire size queries and extract tire size patterns
@@ -402,16 +432,20 @@ const extractSentiment = (sentimentAnalysis: any): string => {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Enhanced query detection with tire size support
+// Enhanced query detection with tire size support and MTF detection
 const detectQueryType = (query: string): { 
   type: string; 
   isKeywordSearch: boolean; 
   extractedKeywords: string[];
   isTireQuery: boolean;
+  isMTFQuery: boolean; // NEW: MTF query detection
 } => {
   const lowerQuery = query.toLowerCase();
   
-  // Check for tire size queries first
+  // Check for MTF queries first
+  const isMTFQuery = detectMTFQuery(query);
+  
+  // Check for tire size queries
   const tireDetection = detectTireSizeQuery(query);
   const isTireQuery = tireDetection.isTireQuery;
   
@@ -443,9 +477,17 @@ const detectQueryType = (query: string): {
     /unavailable.*tire/i,
     /common.*tyre/i,
     /common.*tire/i,
+    // NEW: MTF-specific patterns
+    /mobile.*tyre.*fitting/i,
+    /mobile.*tire.*fitting/i,
+    /mobile.*service/i,
+    /mtf/i,
+    /reasons.*not.*getting/i,
+    /why.*not.*getting/i,
+    /problems.*with.*appointment/i,
   ];
 
-  const isKeywordSearch = keywordSearchPatterns.some(pattern => pattern.test(query)) || isTireQuery;
+  const isKeywordSearch = keywordSearchPatterns.some(pattern => pattern.test(query)) || isTireQuery || isMTFQuery;
   
   let extractedKeywords: string[] = [];
   if (isKeywordSearch) {
@@ -457,6 +499,9 @@ const detectQueryType = (query: string): {
         !COMMON_TIRE_SIZES.includes(keyword)
       );
       extractedKeywords = [...extractedKeywords, ...generalTireTerms];
+    } else if (isMTFQuery) {
+      // For MTF queries, extract relevant keywords but analysis will be limited to MTF calls
+      extractedKeywords = extractKeywordsFromQuery(query);
     } else {
       extractedKeywords = extractKeywordsFromQuery(query);
     }
@@ -464,7 +509,9 @@ const detectQueryType = (query: string): {
 
   // Determine base query type
   let type = 'general';
-  if (isTireQuery) {
+  if (isMTFQuery) {
+    type = 'mtf_analysis'; // NEW: MTF analysis type
+  } else if (isTireQuery) {
     type = 'tire_size_search';
   } else if (isKeywordSearch) {
     type = 'keyword_search';
@@ -484,7 +531,7 @@ const detectQueryType = (query: string): {
     type = 'trends';
   }
 
-  return { type, isKeywordSearch, extractedKeywords, isTireQuery };
+  return { type, isKeywordSearch, extractedKeywords, isTireQuery, isMTFQuery };
 };
 
 // ENHANCED: Much better phrase decomposition with separate individual word search terms
@@ -522,7 +569,7 @@ const extractKeywordsFromQuery = (query: string): string[] => {
   // Remove common query words
   cleanQuery = cleanQuery
     .toLowerCase()
-    .replace(/\b(how many|count|find|search|show me|what|where|when|calls?|records?|included?|contain|mentioned?|about|with|have|were|that|this|they|them|from|call|and|or|the|a|an|is|are|was|be|been|being|for|offer|offers|offered)\b/gi, '')
+    .replace(/\b(how many|count|find|search|show me|what|where|when|calls?|records?|included?|contain|mentioned?|about|with|have|were|that|this|they|them|from|call|and|or|the|a|an|is|are|was|be|been|being|for|offer|offers|offered|reasons|why|not|getting|problems)\b/gi, '')
     .replace(/[^\w\s]/g, ' ')
     .trim();
   
@@ -536,7 +583,7 @@ const extractKeywordsFromQuery = (query: string): string[] => {
     
     // Add 2-word phrases if they seem meaningful and automotive/service related
     if (phrase2.length > 5 && !processedTerms.has(phrase2.toLowerCase())) {
-      const isAutomotivePhrase = /\b(wheel|tire|tyre|brake|oil|engine|alignment|service|repair|quote|warranty|appointment|battery|transmission|filter|fluid|stock|size)\b/i.test(phrase2);
+      const isAutomotivePhrase = /\b(wheel|tire|tyre|brake|oil|engine|alignment|service|repair|quote|warranty|appointment|battery|transmission|filter|fluid|stock|size|mobile|fitting)\b/i.test(phrase2);
       const isServicePhrase = /\b(customer|billing|account|refund|cancel|support|help|delivery|payment|schedule)\b/i.test(phrase2);
       
       if (isAutomotivePhrase || isServicePhrase || phrase2.split(' ').every(w => w.length > 4)) {
@@ -557,7 +604,7 @@ const extractKeywordsFromQuery = (query: string): string[] => {
     
     // Add 3-word phrases if they seem very meaningful
     if (i < words.length - 2 && phrase3.length > 10 && phrase3.length < 30 && !processedTerms.has(phrase3.toLowerCase())) {
-      const isAutomotivePhrase = /\b(wheel|tire|tyre|brake|oil|engine|alignment|service|repair|quote|warranty|appointment|battery|transmission|filter|fluid|stock|size)\b/i.test(phrase3);
+      const isAutomotivePhrase = /\b(wheel|tire|tyre|brake|oil|engine|alignment|service|repair|quote|warranty|appointment|battery|transmission|filter|fluid|stock|size|mobile|fitting)\b/i.test(phrase3);
       
       if (isAutomotivePhrase) {
         keywords.push(phrase3); // Add phrase as separate search term  
@@ -580,7 +627,7 @@ const extractKeywordsFromQuery = (query: string): string[] => {
   words.forEach(word => {
     const lowerWord = word.toLowerCase();
     if (!processedTerms.has(lowerWord) && 
-        (word.length > 3 || ['fee', 'pay', 'buy', 'new', 'old', 'bad', 'mad', 'oil', 'gas', 'air', 'tire', 'tyre'].includes(lowerWord))) {
+        (word.length > 3 || ['fee', 'pay', 'buy', 'new', 'old', 'bad', 'mad', 'oil', 'gas', 'air', 'tire', 'tyre', 'mtf'].includes(lowerWord))) {
       keywords.push(word);
       processedTerms.add(lowerWord);
     }
@@ -747,7 +794,7 @@ const performKeywordSearch = (
   return result;
 };
 
-// Smart transcript selection (updated to handle enhanced keyword search and tire queries)
+// Smart transcript selection (updated to handle enhanced keyword search, tire queries, and MTF queries)
 const selectRelevantTranscripts = (
   records: CallRecord[],
   queryType: string,
@@ -791,12 +838,17 @@ const selectRelevantTranscripts = (
     });
 
     // Enhanced scoring for keyword searches using the new expansion
-    if (queryType === 'keyword_search' || queryType === 'tire_size_search') {
+    if (queryType === 'keyword_search' || queryType === 'tire_size_search' || queryType === 'mtf_analysis') {
       const searchTerms = extractKeywordsFromQuery(query);
       
       // For tire queries, add the common tire sizes to search terms
       if (queryType === 'tire_size_search') {
         searchTerms.push(...COMMON_TIRE_SIZES);
+      }
+      
+      // For MTF queries, add mobile service related terms
+      if (queryType === 'mtf_analysis') {
+        searchTerms.push('mobile', 'fitting', 'appointment', 'booking', 'service', 'mtf');
       }
       
       searchTerms.forEach(term => {
@@ -1031,13 +1083,15 @@ const preprocessCallData = (records: CallRecord[]): ProcessedMetrics => {
   };
 };
 
-// ENHANCED: Updated context preparation with expanded terms info and tire size support
+// ENHANCED: Updated context preparation with expanded terms info, tire size support, and MTF filtering info
 const prepareContextForQuery = (
   detectedQueryType: string,
   query: string,
   metrics: ProcessedMetrics,
   rawRecords: CallRecord[],
   keywordSearchResults?: KeywordSearchResult,
+  isMTFFiltered?: boolean, // NEW: Indicate if MTF filtering was applied
+  totalRecordsBeforeMTFFilter?: number, // NEW: Total records before MTF filtering
   maxTokens: number = 100000
 ): string => {
   console.log(`🔍 Preparing context for detected query type: ${detectedQueryType}`);
@@ -1045,27 +1099,47 @@ const prepareContextForQuery = (
   let context = '';
 
   context += `## Call Center Analytics Summary\n`;
-  context += `**Total Calls Analyzed:** ${metrics.totalCalls.toLocaleString()}\n`;
+  
+  // NEW: Add MTF filtering information
+  if (isMTFFiltered && totalRecordsBeforeMTFFilter) {
+    context += `**IMPORTANT: Analysis filtered to Mobile Tyre Fitting (MTF) calls only**\n`;
+    context += `**Total Calls Before Filtering:** ${totalRecordsBeforeMTFFilter.toLocaleString()}\n`;
+    context += `**MTF Calls Analyzed:** ${metrics.totalCalls.toLocaleString()}\n`;
+    context += `**MTF Percentage of Total Calls:** ${((metrics.totalCalls / totalRecordsBeforeMTFFilter) * 100).toFixed(1)}%\n`;
+  } else {
+    context += `**Total Calls Analyzed:** ${metrics.totalCalls.toLocaleString()}\n`;
+  }
+  
   context += `**Average Call Duration:** ${Math.round(metrics.avgCallDuration / 60)} minutes ${Math.round(metrics.avgCallDuration % 60)} seconds\n`;
   context += `**Average Hold Time:** ${Math.round(metrics.avgHoldTime / 60)} minutes ${Math.round(metrics.avgHoldTime % 60)} seconds\n\n`;
 
-  // Handle enhanced keyword search results (including tire size searches)
-  if ((detectedQueryType === 'keyword_search' || detectedQueryType === 'tire_size_search') && keywordSearchResults) {
+  // Handle enhanced keyword search results (including tire size searches and MTF analysis)
+  if ((detectedQueryType === 'keyword_search' || detectedQueryType === 'tire_size_search' || detectedQueryType === 'mtf_analysis') && keywordSearchResults) {
     const totalCallsPercentage = ((keywordSearchResults.matchingRecords.length / metrics.totalCalls) * 100);
     const transcriptCallsPercentage = keywordSearchResults.searchStats.matchPercentage;
     
-    context += `## ${detectedQueryType === 'tire_size_search' ? 'Tire Size Stock Analysis' : 'Enhanced Keyword Search Results'}\n`;
+    let analysisTitle = 'Enhanced Keyword Search Results';
+    if (detectedQueryType === 'tire_size_search') {
+      analysisTitle = 'Tire Size Stock Analysis';
+    } else if (detectedQueryType === 'mtf_analysis') {
+      analysisTitle = 'Mobile Tyre Fitting (MTF) Analysis';
+    }
+    
+    context += `## ${analysisTitle}\n`;
+    if (isMTFFiltered) {
+      context += `**Note: All results below are from MTF calls only**\n`;
+    }
     context += `**Original Search Terms:** ${keywordSearchResults.searchTerms.join(', ')}\n`;
     context += `**Expanded to ${keywordSearchResults.expandedTerms.length} Variations:** ${keywordSearchResults.expandedTerms.slice(0, 15).join(', ')}${keywordSearchResults.expandedTerms.length > 15 ? '...' : ''}\n`;
     context += `**CALL COUNT WITH KEYWORDS:** ${keywordSearchResults.matchingRecords.length} calls\n`;
-    context += `**PERCENTAGE OF TOTAL CALLS:** ${totalCallsPercentage.toFixed(1)}% (${keywordSearchResults.matchingRecords.length} out of ${metrics.totalCalls} total calls)\n`;
+    context += `**PERCENTAGE OF ${isMTFFiltered ? 'MTF' : 'TOTAL'} CALLS:** ${totalCallsPercentage.toFixed(1)}% (${keywordSearchResults.matchingRecords.length} out of ${metrics.totalCalls} ${isMTFFiltered ? 'MTF' : 'total'} calls)\n`;
     context += `**PERCENTAGE OF CALLS WITH TRANSCRIPTS:** ${transcriptCallsPercentage.toFixed(1)}% (${keywordSearchResults.matchingRecords.length} out of ${keywordSearchResults.searchStats.recordsWithTranscripts} calls with transcript data)\n`;
     context += `**Total Keyword Mentions:** ${keywordSearchResults.totalMatches}\n`;
     context += `**Records Searched:** ${keywordSearchResults.searchStats.totalRecordsSearched}\n`;
     context += `**Records with Transcript Data:** ${keywordSearchResults.searchStats.recordsWithTranscripts}\n\n`;
 
     if (keywordSearchResults.matchingRecords.length > 0) {
-      context += `### Top Matching Records ${detectedQueryType === 'tire_size_search' ? '(Tire Size Mentions)' : '(Enhanced Matching)'}\n`;
+      context += `### Top Matching Records\n`;
       keywordSearchResults.matchingRecords.slice(0, 10).forEach((match, index) => {
         context += `#### Match ${index + 1}\n`;
         context += `**Agent:** ${match.agent} | **Disposition:** ${match.disposition} | **Sentiment:** ${match.sentiment}\n`;
@@ -1114,6 +1188,9 @@ const prepareContextForQuery = (
     
     if (transcriptSamples.length > 0) {
       context += `## Relevant Call Transcript Examples\n`;
+      if (isMTFFiltered) {
+        context += `**Note: All transcript examples below are from MTF calls only**\n`;
+      }
       transcriptSamples.forEach((sample, index) => {
         context += `### Example ${index + 1}\n`;
         context += `**Agent:** ${sample.agent} | **Disposition:** ${sample.disposition} | **Sentiment:** ${sample.sentiment} | **Duration:** ${Math.round(sample.duration / 60)}m\n`;
@@ -1125,6 +1202,26 @@ const prepareContextForQuery = (
 
   // Rest of context preparation based on query type (existing logic)
   switch (detectedQueryType) {
+    case 'mtf_analysis':
+      context += `## MTF-Specific Analysis\n`;
+      if (isMTFFiltered) {
+        context += `### MTF Disposition Breakdown\n`;
+        Object.entries(metrics.dispositionBreakdown)
+          .sort(([, a], [, b]) => (b as any).count - (a as any).count)
+          .forEach(([disposition, data]) => {
+            context += `**${disposition}:** ${data.count} calls (${data.percentage.toFixed(1)}% of MTF calls)\n`;
+          });
+        
+        context += `\n### MTF Agent Performance\n`;
+        Object.entries(metrics.agentMetrics)
+          .sort(([, a], [, b]) => (b as any).totalCalls - (a as any).totalCalls)
+          .slice(0, 5)
+          .forEach(([agent, data]) => {
+            context += `**${agent}:** ${data.totalCalls} MTF calls, ${Math.round(data.avgDuration / 60)}m avg duration\n`;
+          });
+      }
+      break;
+      
     case 'tire_size_search':
     case 'keyword_search':
       // Already handled above
@@ -1132,6 +1229,9 @@ const prepareContextForQuery = (
       
     case 'disposition':
       context += `## Disposition Analysis\n`;
+      if (isMTFFiltered) {
+        context += `**Note: Disposition analysis below is for MTF calls only**\n`;
+      }
       Object.entries(metrics.dispositionBreakdown)
         .sort(([, a], [, b]) => (b as any).count - (a as any).count)
         .forEach(([disposition, data]) => {
@@ -1142,6 +1242,9 @@ const prepareContextForQuery = (
     // ... other cases remain the same
     default:
       context += `## Key Metrics Overview\n`;
+      if (isMTFFiltered) {
+        context += `**Note: All metrics below are for MTF calls only**\n`;
+      }
       context += `**Top 5 Dispositions:**\n`;
       Object.entries(metrics.dispositionBreakdown)
         .sort(([, a], [, b]) => (b as any).count - (a as any).count)
@@ -1210,7 +1313,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'OpenAI API key not configured' }, { status: 500 });
     }
 
-    // Automatic query type detection with enhanced keyword handling and tire size support
+    // Automatic query type detection with enhanced keyword handling, tire size support, and MTF detection
     const detectedQuery = detectQueryType(query);
     const actualQueryType = detectedQuery.type;
     
@@ -1220,6 +1323,7 @@ export async function POST(request: NextRequest) {
     console.log(`🔎 Is keyword search: ${detectedQuery.isKeywordSearch}`);
     console.log(`🏷️ Extracted keywords: ${detectedQuery.extractedKeywords.join(', ')}`);
     console.log(`🚗 Is tire query: ${detectedQuery.isTireQuery}`);
+    console.log(`📱 Is MTF query: ${detectedQuery.isMTFQuery}`); // NEW: Log MTF detection
     
     // Debug the available data
     console.log(`📊 Data available:`);
@@ -1227,48 +1331,71 @@ export async function POST(request: NextRequest) {
     console.log(`  - callData?.data?.sampleRecords: ${callData?.data?.sampleRecords ? callData.data.sampleRecords.length : 'null'} records`);
     console.log(`  - callData?.data?.fullRecords: ${callData?.data?.fullRecords ? callData.data.fullRecords.length : 'null'} records`);
 
-    // For keyword searches (including tire size searches), we MUST have access to all records
+    // Get the complete dataset first
     let allAvailableRecords: CallRecord[] = [];
     
-    if ((actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search') && detectedQuery.isKeywordSearch) {
-      // Try multiple sources for complete dataset
-      if (fullRecords && fullRecords.length > 100) {
-        allAvailableRecords = fullRecords;
-        console.log(`✅ Using fullRecords for keyword search: ${allAvailableRecords.length} records`);
-      } else if (callData?.data?.fullRecords && callData.data.fullRecords.length > 100) {
-        allAvailableRecords = callData.data.fullRecords;
-        console.log(`✅ Using callData.fullRecords for keyword search: ${allAvailableRecords.length} records`);
-      } else if (callData?.data?.sampleRecords) {
-        allAvailableRecords = callData.data.sampleRecords;
-        console.log(`⚠️ WARNING: Only sample records available for keyword search: ${allAvailableRecords.length} records`);
-        console.log(`⚠️ This will give inaccurate keyword counts. Full dataset needed for accurate results.`);
-      } else {
-        return NextResponse.json({ 
-          error: 'Insufficient data for keyword search. Full dataset required for accurate keyword counting.',
-          suggestion: 'Please ensure all call records are sent to the backend for keyword searches.'
-        }, { status: 400 });
-      }
+    if (fullRecords && fullRecords.length > 100) {
+      allAvailableRecords = fullRecords;
+      console.log(`✅ Using fullRecords: ${allAvailableRecords.length} records`);
+    } else if (callData?.data?.fullRecords && callData.data.fullRecords.length > 100) {
+      allAvailableRecords = callData.data.fullRecords;
+      console.log(`✅ Using callData.fullRecords: ${allAvailableRecords.length} records`);
+    } else if (callData?.data?.sampleRecords) {
+      allAvailableRecords = callData.data.sampleRecords;
+      console.log(`⚠️ WARNING: Only sample records available: ${allAvailableRecords.length} records`);
     } else {
-      // For non-keyword searches, use the normal data selection
-      allAvailableRecords = fullRecords && fullRecords.length > 0 ? fullRecords : 
-                           (callData?.data?.sampleRecords || []);
-    }
-
-    if (!allAvailableRecords || allAvailableRecords.length === 0) {
       return NextResponse.json({ 
         error: 'No call records available for analysis' 
       }, { status: 400 });
     }
 
-    let keywordSearchResults: KeywordSearchResult | undefined;
+    // NEW: Apply MTF filtering if MTF query is detected
     let recordsToAnalyze = allAvailableRecords;
+    let isMTFFiltered = false;
+    let totalRecordsBeforeMTFFilter = 0;
     
-    // Perform ENHANCED keyword search on ALL available records (including tire size searches)
-    if ((actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search') && detectedQuery.extractedKeywords.length > 0) {
-      console.log(`🔍 Performing ENHANCED keyword search on ALL ${allAvailableRecords.length} records...`);
+    if (detectedQuery.isMTFQuery) {
+      totalRecordsBeforeMTFFilter = allAvailableRecords.length;
+      const mtfRecords = allAvailableRecords.filter(record => 
+        record.disposition_title && 
+        record.disposition_title.toLowerCase().includes('mtf')
+      );
       
-      // Search ALL available records for accurate counts with enhanced matching
-      keywordSearchResults = performKeywordSearch(allAvailableRecords, detectedQuery.extractedKeywords);
+      if (mtfRecords.length === 0) {
+        return NextResponse.json({ 
+          error: 'No MTF (Mobile Tyre Fitting) calls found in the dataset. Please check if disposition titles contain "MTF".',
+          suggestion: 'Verify that mobile tyre fitting calls are properly categorized with "MTF" in the disposition_title field.'
+        }, { status: 400 });
+      }
+      
+      recordsToAnalyze = mtfRecords;
+      isMTFFiltered = true;
+      
+      console.log(`🔍 MTF FILTERING APPLIED:`);
+      console.log(`   - Total records before filtering: ${totalRecordsBeforeMTFFilter}`);
+      console.log(`   - MTF records found: ${recordsToAnalyze.length}`);
+      console.log(`   - MTF percentage: ${((recordsToAnalyze.length / totalRecordsBeforeMTFFilter) * 100).toFixed(1)}%`);
+    } else {
+      // For non-MTF searches, use normal selection logic
+      if ((actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search') && detectedQuery.isKeywordSearch) {
+        // For keyword searches, we need all records for accurate counting
+        if (allAvailableRecords.length < 100) {
+          console.log(`⚠️ WARNING: Only ${allAvailableRecords.length} records available for keyword search`);
+          console.log(`⚠️ This will give inaccurate keyword counts. Full dataset needed for accurate results.`);
+        }
+        recordsToAnalyze = allAvailableRecords;
+      } else {
+        recordsToAnalyze = allAvailableRecords;
+      }
+    }
+
+    let keywordSearchResults: KeywordSearchResult | undefined;
+    
+    // Perform keyword search on the (potentially MTF-filtered) records
+    if ((actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search' || actualQueryType === 'mtf_analysis') && detectedQuery.extractedKeywords.length > 0) {
+      console.log(`🔍 Performing ENHANCED keyword search on ${recordsToAnalyze.length} ${isMTFFiltered ? 'MTF-filtered' : ''} records...`);
+      
+      keywordSearchResults = performKeywordSearch(recordsToAnalyze, detectedQuery.extractedKeywords);
       console.log(`✅ Enhanced keyword search results:`);
       console.log(`   - Original terms: ${keywordSearchResults.searchTerms.length}`);
       console.log(`   - Expanded variations: ${keywordSearchResults.expandedTerms.length}`);
@@ -1276,58 +1403,25 @@ export async function POST(request: NextRequest) {
       console.log(`   - Records with matches: ${keywordSearchResults.matchingRecords.length}`);
       console.log(`   - Records searched: ${keywordSearchResults.searchStats.totalRecordsSearched}`);
       console.log(`   - Records with transcripts: ${keywordSearchResults.searchStats.recordsWithTranscripts}`);
-      
-      // For AI processing, create a smart subset
-      if (keywordSearchResults.matchingRecords.length > 0) {
-        const matchingRecordIds = new Set(keywordSearchResults.matchingRecords.map(r => r.id));
-        const matchingRecords = allAvailableRecords.filter(r => matchingRecordIds.has(r.id));
-        const nonMatchingRecords = allAvailableRecords.filter(r => !matchingRecordIds.has(r.id));
-        
-        // Limit matching records for AI context (but keep all for search results)
-        const limitedMatchingRecords = matchingRecords;
-        const sampleNonMatchingRecords = nonMatchingRecords;
-        
-        recordsToAnalyze = [...limitedMatchingRecords, ...sampleNonMatchingRecords];
-        
-        console.log(`📋 Records for AI analysis: ${recordsToAnalyze.length} (${limitedMatchingRecords.length} matching + ${sampleNonMatchingRecords.length} sample)`);
-      } else {
-        // No matches found, use a sample for baseline metrics
-        recordsToAnalyze = allAvailableRecords;
-        console.log(`📋 No matches found. Using ${recordsToAnalyze.length} sample records for baseline metrics.`);
-      }
-    } else {
-      // For non-keyword searches, limit records for performance
-      const maxRecordsForAnalysis = allAvailableRecords.length;
-      if (allAvailableRecords.length > maxRecordsForAnalysis) {
-        recordsToAnalyze = allAvailableRecords.slice(0, maxRecordsForAnalysis);
-        console.log(`📊 Limited to ${maxRecordsForAnalysis} records for non-keyword analysis`);
-      }
     }
 
-    console.log(`Processing ${recordsToAnalyze.length} call records for AI analysis (detected query type: ${actualQueryType})`);
+    console.log(`Processing ${recordsToAnalyze.length} call records for AI analysis (detected query type: ${actualQueryType})${isMTFFiltered ? ' [MTF FILTERED]' : ''}`);
     
-    // Create metrics from the AI analysis subset, but override totals for keyword searches
-    let metrics = preprocessCallData(recordsToAnalyze);
-    
-    // For keyword searches, override totalCalls to reflect the complete dataset
-    if ((actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search') && keywordSearchResults) {
-      metrics = {
-        ...metrics,
-        totalCalls: allAvailableRecords.length, // Use complete dataset count
-      };
-      console.log(`📈 Metrics updated: totalCalls set to ${metrics.totalCalls} (complete dataset)`);
-    }
+    // Create metrics from the (potentially MTF-filtered) records
+    const metrics = preprocessCallData(recordsToAnalyze);
 
-    // Prepare context using detected query type with enhanced keyword results
+    // Prepare context using detected query type with enhanced keyword results and MTF filtering info
     const context = prepareContextForQuery(
       actualQueryType, 
       query, 
       metrics, 
       recordsToAnalyze, 
-      keywordSearchResults
+      keywordSearchResults,
+      isMTFFiltered, // NEW: Pass MTF filtering status
+      totalRecordsBeforeMTFFilter || undefined // NEW: Pass original total if MTF filtered
     );
 
-    // Enhanced system prompt for better keyword search handling including tire sizes
+    // Enhanced system prompt for better keyword search handling including tire sizes and MTF analysis
     const systemPrompt = `You are PRISM AI, an expert call center analytics assistant with advanced keyword matching capabilities. You use enhanced search algorithms that include plurals, synonyms, word variations, and fuzzy matching to provide comprehensive insights.
 
 Key Guidelines:
@@ -1335,6 +1429,7 @@ Key Guidelines:
 - When transcript examples are provided, reference them to support your analysis with concrete evidence
 - For keyword searches, ALWAYS prominently highlight both the exact call count AND the percentage of total calls that contained the keywords (including variations)
 - For keyword searches, start your response with the key statistics: "X calls (Y.Z% of all calls) contained variations of the searched keywords"
+- For MTF-filtered analyses, clearly state that the analysis is limited to Mobile Tyre Fitting calls only
 - Explain that your search includes plurals, synonyms, and word variations for comprehensive matching
 - When search terms are expanded (e.g., "refund" to include "refunds", "reimbursement", "return"), mention the enhanced matching capability
 - Use the transcript examples to illustrate patterns and validate statistical findings
@@ -1355,15 +1450,14 @@ Enhanced Search Features:
 - For multi-word phrases like "wheel alignment", searches for both the complete phrase AND individual words ("wheel", "alignment") with all their variations
 - For tire size queries, automatically searches for specific tire sizes: 195/65R15, 205/55R16, 215/60R16, 215/55R17, 225/45R17, 195/60R14, 255/45R19, 245/40R20, 285/35R20
 
-Special Tire Size Analysis:
-- When detecting tire size or stock-related queries, automatically searches for common tire sizes
-- Provides specific counts for each tire size mentioned in calls
-- Analyzes stock availability patterns and customer demand
-- Identifies which tire sizes are most frequently requested or mentioned as unavailable
+Special Analysis Types:
+- MTF Analysis: When analyzing Mobile Tyre Fitting queries, focus on appointment booking issues, service delivery problems, scheduling conflicts, and customer satisfaction specific to mobile services
+- Tire Size Analysis: When detecting tire size or stock-related queries, automatically searches for common tire sizes and provides specific counts for each tire size mentioned in calls
+- When data is filtered (e.g., MTF-only calls), always clarify the scope of analysis and what percentage of total calls this represents
 
 Always structure your response with:
 1. Direct answer to the question (for keyword searches: lead with "X calls (Y.Z% of total calls) contained variations of [keywords]")
-2. Brief explanation of enhanced matching used (for keyword searches)
+2. Brief explanation of enhanced matching used (for keyword searches) and any filtering applied
 3. Supporting data/statistics
 4. Key insights or patterns (reference transcripts/keyword matches when relevant)
 5. Actionable recommendations (when relevant)`;
@@ -1372,7 +1466,7 @@ Always structure your response with:
 
 ${context}
 
-Please provide a comprehensive analysis with specific metrics and actionable insights. When enhanced keyword search results are available, explain the scope of matching used and use the examples to validate and illustrate your findings.${actualQueryType === 'tire_size_search' ? ' This is a tire size analysis - provide specific insights about tire stock patterns and customer demand for different tire sizes.' : ''}`;
+Please provide a comprehensive analysis with specific metrics and actionable insights. When enhanced keyword search results are available, explain the scope of matching used and use the examples to validate and illustrate your findings.${actualQueryType === 'tire_size_search' ? ' This is a tire size analysis - provide specific insights about tire stock patterns and customer demand for different tire sizes.' : ''}${actualQueryType === 'mtf_analysis' ? ' This is a Mobile Tyre Fitting (MTF) analysis - focus on appointment booking issues, service delivery problems, and customer satisfaction specific to mobile tyre fitting services.' : ''}${isMTFFiltered ? ' IMPORTANT: This analysis is limited to MTF calls only - clearly state this limitation in your response.' : ''}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1400,15 +1494,18 @@ Please provide a comprehensive analysis with specific metrics and actionable ins
       queryType: actualQueryType, // Return the detected type
       detectedKeywordSearch: detectedQuery.isKeywordSearch,
       detectedTireQuery: detectedQuery.isTireQuery,
+      detectedMTFQuery: detectedQuery.isMTFQuery, // NEW: Include MTF detection in metadata
+      isMTFFiltered, // NEW: Include MTF filtering status
+      totalRecordsBeforeMTFFilter, // NEW: Include original total if filtered
       hasFullDispositions: fullRecords && fullRecords.length > 0,
-      enhancedKeywordSearch: actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search',
+      enhancedKeywordSearch: actualQueryType === 'keyword_search' || actualQueryType === 'tire_size_search' || actualQueryType === 'mtf_analysis',
       keywordSearchResults: keywordSearchResults ? {
         totalMatches: keywordSearchResults.totalMatches,
         recordsWithMatches: keywordSearchResults.matchingRecords.length,
         searchTerms: keywordSearchResults.searchTerms,
         expandedTerms: keywordSearchResults.expandedTerms.length,
       } : undefined,
-      cacheKey: `${query}_${recordsToAnalyze.length}`,
+      cacheKey: `${query}_${recordsToAnalyze.length}_${isMTFFiltered ? 'mtf' : 'all'}`,
     };
 
     return NextResponse.json({
