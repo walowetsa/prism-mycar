@@ -132,7 +132,7 @@ const queryCache = new Map<
   string,
   { response: string; timestamp: number; metadata: any }
 >();
-const CACHE_DURATION = 60 * 60 * 1000;
+const CACHE_DURATION = 120 * 60 * 1000;
 
 const getCachedResponse = (query: string, recordCount: number): any | null => {
   const cacheKey = `${query.toLowerCase().trim()}_${recordCount}`;

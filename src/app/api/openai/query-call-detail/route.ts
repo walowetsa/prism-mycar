@@ -17,21 +17,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { callRecord, transcript, callInfo } = callData;
+    const { callRecord } = callData;
 
     const systemPrompt = `You are an AI assistant specialized in analysing individual call center interactions and providing detailed insights.
 
 Call Context:
-- Call ID: ${callRecord.id}
 - Agent: ${callRecord.agent_username || 'Unknown'}
 - Queue: ${callRecord.queue_name || 'Unknown'}
 - Duration: ${callRecord.call_duration || 'Unknown'}
-- Has Transcript: ${callInfo.hasTranscript}
-- Has Sentiment Analysis: ${callInfo.hasSentiment}
-- Has Entities: ${callInfo.hasEntities}
-- Has Summary: ${callInfo.hasSummary}
-- Transcript Segments: ${callInfo.transcriptLength}
-- Number of Speakers: ${callInfo.speakerCount}
+- Call Summary: ${callRecord.call_summary}
+- Transcript: ${callRecord.transcript_text}
+- Number of speakers: 2
 
 Analysis Guidelines:
 - Provide detailed, specific insights about this individual call
@@ -55,25 +51,22 @@ Available Data Fields:
 - Customer CLI information`;
 
     // JSON Prep
-    const callDataString = JSON.stringify({
-      ...callRecord,
-      transcript_segments: transcript
-    }, null, 2);
+    // const callDataString = JSON.stringify({
+    //   ...callRecord,
+    //   transcript_segments: transcript
+    // }, null, 2);
 
     const userPrompt = `Please analyse this specific call center interaction and respond to: "${query}"
-
-Call Record Data:
-${callDataString}
 
 Provide a comprehensive analysis focusing on this individual call with specific insights and actionable recommendations.`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4.1',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      max_tokens: 4000,
+      max_tokens: 10000,
       temperature: 0.3,
     });
 
