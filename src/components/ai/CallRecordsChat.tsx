@@ -620,26 +620,30 @@ const CallRecordsChat: React.FC<CallRecordsChatProps> = ({
 
   const getSmartPrompts = () => {
     const basePrompts = [
-      "Show me complete disposition breakdown with percentages",
-      "Analyse customer sentiment trends",
-      "What are our average call times?",
+    "How many calls included a tyre care plan pitch?",
+    "How many calls included a Wheel Alignment pitch?",
+    "How many calls were declined due to stock or store availability?",
+    "How many calls were declined due to fitment period?",
+    "How many calls resulted in customers buying non-Pirelli tyres?",
+    "Analyse customer sentiment for all calls?",
+    "Give me a breakdown of sales declined calls.",
     ];
 
-    if (filteredRecords.length > 1000) {
-      return [
-        ...basePrompts,
-        "Identify top performing agents.",
-        "Show queue efficiency metrics",
-        "What are the main customer issues?",
-        "Analyse peak call times and disposition patterns",
-      ];
-    }
+    // if (filteredRecords.length > 1000) {
+    //   return [
+    //     ...basePrompts,
+    //     "Identify top performing agents.",
+    //     "Show queue efficiency metrics",
+    //     "What are the main customer issues?",
+    //     "Analyse peak call times and disposition patterns",
+    //   ];
+    // }
 
     return [
       ...basePrompts,
-      "Compare agent performances.",
-      "Which queues need attention based on outcomes?",
-      "Identify improvement opportunities",
+      // "Compare agent performances.",
+      // "Which queues need attention based on outcomes?",
+      // "Identify improvement opportunities",
     ];
   };
 
