@@ -97,7 +97,7 @@ export async function GET(request: NextRequest) {
     // If count-only, return early with just the count
     if (countOnly) {
       let countQuery = supabase
-        .from('call_records')
+        .from('call_records_bfs')
         .select('contact_id', { count: 'exact', head: true })
       
       countQuery = applyFilters(
@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
 
     // Build query for full data
     let query = supabase
-      .from('call_records')
+      .from('call_records_bfs')
       .select(`
         contact_id, 
         recording_location, 
@@ -245,7 +245,7 @@ export async function POST(request: NextRequest) {
     if (type === 'agents') {
       // Use DISTINCT for better performance
       const { data, error } = await supabase
-        .from('call_records')
+        .from('call_records_bfs')
         .select('agent_username')
         .not('agent_username', 'is', null)
         .limit(1000) // Reasonable limit for distinct values
@@ -264,7 +264,7 @@ export async function POST(request: NextRequest) {
     } else if (type === 'dispositions') {
       // Use DISTINCT for better performance
       const { data, error } = await supabase
-        .from('call_records')
+        .from('call_records_bfs')
         .select('disposition_title')
         .not('disposition_title', 'is', null)
         .limit(1000) // Reasonable limit for distinct values

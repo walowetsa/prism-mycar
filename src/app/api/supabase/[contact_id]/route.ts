@@ -21,7 +21,7 @@ export async function GET(
     }
 
     const { data, error } = await supabase
-      .from('call_records')
+      .from('call_records_bfs')
       .select('*') 
       .eq('contact_id', contact_id)
       .single() 
